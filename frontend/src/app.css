@@ -79,7 +79,10 @@
 
   --nav-control-height: 2.15rem;
   --max-width-container: 64rem;
-  --max-width-narrow: 42rem;
+  /* 46rem keeps body copy inside the ~75-char readable-line-length sweet spot
+     while trimming a bit of the dead space `.page-narrow` pages (About,
+     Settings) leave on very wide desktop viewports. */
+  --max-width-narrow: 46rem;
 
   /* Page rhythm. `.page-content` owns the gap above the first content block and
      below the last one; pages must not set their own vertical padding, or the
@@ -747,6 +750,13 @@ select.select {
   flex-direction: column;
   justify-content: flex-start;
   gap: 0.3rem;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-muted);
 }
 
 /* Composer: the new-thread panel and the inline reply boxes are one form

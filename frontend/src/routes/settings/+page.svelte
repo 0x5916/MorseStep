@@ -417,6 +417,7 @@
           <label class="field">
             <span class="label-text">{m.settings_username_label()}</span>
             <input type="text" value={username} class="input" disabled />
+            <span class="field-hint">{m.settings_username_locked_hint()}</span>
           </label>
           <label class="field">
             <span class="label-text">{m.settings_call_sign_label()}</span>

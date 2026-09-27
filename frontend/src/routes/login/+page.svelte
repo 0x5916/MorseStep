@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { login } from '$lib/auth';
+  import { login, user } from '$lib/auth';
   import { localizeApiError } from '$lib/errorLocalization';
   import { goto } from '$app/navigation';
   import AuthCard from '$lib/components/AuthCard.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import PasswordInput from '$lib/components/PasswordInput.svelte';
   import { localizedHref } from '$lib/i18n.svelte';
   import * as m from '$lib/paraglide/messages';
 
@@ -11,6 +12,14 @@
   let password = $state('');
   let err = $state('');
   let loading = $state(false);
+
+  // A signed-in visitor has nothing to do here; send them home instead of
+  // showing a login form for an account they're already in.
+  $effect(() => {
+    if ($user) {
+      void goto(localizedHref('/'), { replaceState: true });
+    }
+  });
 
   async function handleLogin(e: SubmitEvent) {
     e.preventDefault();
@@ -41,17 +50,18 @@
       />
     </label>
 
-    <label class="field">
-      <span class="label-text">{m.login_password_label()}</span>
-      <input
-        type="password"
+    <div class="field">
+      <label for="login-password" class="label-text">{m.login_password_label()}</label>
+      <PasswordInput
+        id="login-password"
         bind:value={password}
-        class="input"
         placeholder={m.login_password_placeholder()}
         autocomplete="current-password"
         required
+        showLabel={m.login_password_show()}
+        hideLabel={m.login_password_hide()}
       />
-    </label>
+    </div>
 
     {#if err}
       <ErrorAlert message={err} />
