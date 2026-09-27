@@ -145,11 +145,19 @@
   .about-toc-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem 1rem;
+    /* Row gap keeps room for the expanded targets on the links below. */
+    gap: 0.6rem 1rem;
     margin: 0;
     padding: 0;
     list-style: none;
     font-size: var(--text-sm);
+  }
+
+  /* Section links are bare text a single line tall. Padding grows the tap area
+     and the negative margin keeps the links aligned with the list. */
+  .about-toc-list li a {
+    padding: 0.25rem 0.375rem;
+    margin: -0.25rem -0.375rem;
   }
 
   /* Long-form, sequential content: no card chrome. Article rhythm + rules read
@@ -176,6 +184,13 @@
 
   .about-links {
     margin-top: var(--space-3);
+  }
+
+  /* This paragraph holds the link alone rather than inline in a sentence, so it
+     gets a real target instead of relying on the inline-text exception. */
+  .about-links .link {
+    padding: 0.25rem 0.375rem;
+    margin: -0.25rem -0.375rem;
   }
 
   /* Two-peer comparison: one container, one shared edge, tinted columns. */

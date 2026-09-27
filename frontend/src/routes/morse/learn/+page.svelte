@@ -1271,6 +1271,9 @@
 
   .session-link {
     align-self: flex-start;
+    /* Grows the link to a full-size target without moving it in the sidebar. */
+    padding: 0.3rem;
+    margin: -0.3rem;
     font-size: var(--text-sm);
     color: var(--text-secondary);
     text-decoration: none;

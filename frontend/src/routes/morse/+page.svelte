@@ -9,7 +9,7 @@
   <title>{m.morse_title()} | {SITE_NAME}</title>
 </svelte:head>
 
-<div class="page-narrow">
+<div class="page-narrow morse-hub">
   <header class="morse-header">
     <h1 class="page-title">{m.morse_title()}</h1>
     <p class="body-text">{m.morse_intro()}</p>
@@ -55,5 +55,23 @@
   .tool-note {
     font-size: var(--text-sm);
     color: var(--text-muted);
+  }
+
+  /* A single tool in a 46rem column leaves most of a desktop viewport empty, so
+     from the wide breakpoint the header and the tool list sit side by side in a
+     wider band instead of one narrow strip. */
+  @media (min-width: 1024px) {
+    .morse-hub {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: start;
+      gap: var(--block-gap);
+      max-width: 64rem;
+    }
+
+    /* The shared page rhythm sets the gap above the list; the grid owns it. */
+    .morse-hub .row-list {
+      margin-top: 0;
+    }
   }
 </style>

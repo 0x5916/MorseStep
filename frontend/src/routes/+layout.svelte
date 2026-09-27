@@ -258,7 +258,7 @@
             {/snippet}
             {#snippet menu()}
               <a href={href('/profile')} class="user-dropdown-item" role="menuitem"
-                ><LayoutDashboard size={14} /> {m.nav_profile()}</a
+                ><LayoutDashboard size={14} /> {m.nav_progress()}</a
               >
               <a href={href('/settings')} class="user-dropdown-item" role="menuitem"
                 ><Settings size={14} /> {m.nav_settings()}</a
@@ -279,7 +279,7 @@
             {/snippet}
             {#snippet menu()}
               <a href={href('/profile')} class="user-dropdown-item" role="menuitem"
-                ><LayoutDashboard size={14} /> {m.nav_profile()}</a
+                ><LayoutDashboard size={14} /> {m.nav_progress()}</a
               >
               <a href={href('/settings')} class="user-dropdown-item" role="menuitem"
                 ><Settings size={14} /> {m.nav_settings()}</a

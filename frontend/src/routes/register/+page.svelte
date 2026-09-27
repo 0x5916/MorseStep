@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { register } from '$lib/auth';
+  import { register, user } from '$lib/auth';
   import { localizeApiError } from '$lib/errorLocalization';
   import { goto } from '$app/navigation';
   import AuthCard from '$lib/components/AuthCard.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import PasswordInput from '$lib/components/PasswordInput.svelte';
   import { localizedHref } from '$lib/i18n.svelte';
   import * as m from '$lib/paraglide/messages';
 
@@ -13,6 +14,14 @@
   let confirmPassword = $state('');
   let err = $state('');
   let loading = $state(false);
+
+  // A signed-in visitor has nothing to do here; send them home instead of
+  // showing a registration form for a new account they don't need.
+  $effect(() => {
+    if ($user) {
+      void goto(localizedHref('/'), { replaceState: true });
+    }
+  });
 
   async function handleRegister(e: SubmitEvent) {
     e.preventDefault();
@@ -63,31 +72,33 @@
       />
     </label>
 
-    <label class="field">
-      <span class="label-text">{m.register_password_label()}</span>
-      <input
-        type="password"
+    <div class="field">
+      <label for="register-password" class="label-text">{m.register_password_label()}</label>
+      <PasswordInput
+        id="register-password"
         bind:value={password}
-        class="input"
         placeholder={m.register_password_placeholder()}
         autocomplete="new-password"
-        minlength="8"
+        minlength={8}
         required
+        showLabel={m.register_password_show()}
+        hideLabel={m.register_password_hide()}
       />
-    </label>
+    </div>
 
-    <label class="field">
-      <span class="label-text">{m.register_confirm_label()}</span>
-      <input
-        type="password"
+    <div class="field">
+      <label for="register-confirm-password" class="label-text">{m.register_confirm_label()}</label>
+      <PasswordInput
+        id="register-confirm-password"
         bind:value={confirmPassword}
-        class="input"
         placeholder={m.register_confirm_placeholder()}
         autocomplete="new-password"
-        minlength="8"
+        minlength={8}
         required
+        showLabel={m.register_confirm_show()}
+        hideLabel={m.register_confirm_hide()}
       />
-    </label>
+    </div>
 
     {#if err}
       <ErrorAlert message={err} />

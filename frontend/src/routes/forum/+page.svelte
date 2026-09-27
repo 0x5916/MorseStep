@@ -346,7 +346,7 @@
       {#each threads as thread (thread.id)}
         <li>
           <a class="row-link thread-row" href={href(`/forum/${thread.id}`)}>
-            <h3 class="thread-title">{thread.title}</h3>
+            <h2 class="thread-title">{thread.title}</h2>
             <p class="meta-row">
               <span class="thread-cat"
                 ><span class="chip-dot"></span>{forumCategoryLabel(thread.category)}</span
@@ -425,6 +425,14 @@
     font-weight: 500;
     line-height: var(--leading-snug);
     text-decoration: none;
+  }
+
+  /* A short label like "All" is only as wide as its text. This overlay grows
+     the pointer target without moving the chip or stretching the active rule. */
+  .filter-link::after {
+    content: '';
+    position: absolute;
+    inset: -0.3rem -0.45rem;
   }
 
   .filter-link:hover {
@@ -534,6 +542,12 @@
     .filter-link {
       min-height: 2.75rem;
       padding: 0.25rem 0.3rem;
+    }
+
+    /* Phones pack the chips 4px apart, so the overlay would only overlap
+       neighbouring targets. The 44px height floor already does the work. */
+    .filter-link::after {
+      display: none;
     }
   }
 </style>

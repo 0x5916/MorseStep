@@ -255,8 +255,8 @@ const ROUTE_SEO: Record<string, SeoRouteOverride> = {
   '/profile': {
     localized: {
       en: {
-        title: 'Profile - OpenCW',
-        description: 'Review your OpenCW profile and training milestones.'
+        title: 'Progress - OpenCW',
+        description: 'Review your OpenCW progress and training milestones.'
       }
     }
   },
