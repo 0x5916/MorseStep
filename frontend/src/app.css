@@ -412,6 +412,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  /* Pads the back link into a full-size target; the matching negative margin
+     keeps it sitting exactly where the text was. */
+  padding-block: 0.65rem;
+  margin-block: -0.65rem;
   color: var(--text-secondary);
   font-size: var(--text-sm);
   text-decoration: none;

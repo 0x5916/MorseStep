@@ -68,6 +68,10 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* Pads the wordmark up to a comfortable target; the negative margin keeps the
+     bar's own height and the mark's position unchanged. */
+  padding-block: 0.4rem;
+  margin-block: -0.4rem;
   color: var(--text-primary);
   font-size: var(--text-lg);
   font-weight: 600;
@@ -396,6 +400,10 @@
 }
 
 .footer-link {
+  /* Footer links sit 1rem apart, so the padding stays inside that gap: the
+     negative margin keeps the row's spacing and alignment unchanged. */
+  padding: 0.7rem 0.4rem;
+  margin: -0.7rem -0.4rem;
   color: var(--text-secondary);
   text-decoration: none;
 }
