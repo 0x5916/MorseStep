@@ -11,7 +11,7 @@
   import MorsePlayer from '$lib/components/MorsePlayer.svelte';
   import ResultOverlay from '$lib/components/ResultOverlay.svelte';
   import GuestNotice from '$lib/components/GuestNotice.svelte';
-  import { tick, untrack, onDestroy } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { ArrowLeft, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { CW_STORAGE_KEYS, UI_STORAGE_KEYS } from '$lib/storageKeys';
   import { langPreference, localizedHref as href } from '$lib/i18n.svelte';
@@ -46,6 +46,7 @@
   let showOverlay = $state(false);
   let diffTokens = $state<DiffToken[]>([]);
   let showQuickStart = $state(false);
+  let quickStartInstructionsOpen = $state(true);
   let charWpm = $state(20);
   let effWpm = $state(10);
   let freq = $state(600);
@@ -91,6 +92,10 @@
     showQuickStart = localStorage.getItem(UI_STORAGE_KEYS.quickstartDismissed) !== '1';
   });
 
+  onMount(() => {
+    quickStartInstructionsOpen = !window.matchMedia('(max-width: 639px)').matches;
+  });
+
   $effect(() => {
     if (!browser) return;
     const localCw = readClientCwSettings();
@@ -100,10 +105,21 @@
     startDelay = localCw.start_delay;
   });
 
-  function dismissQuickStart() {
+  async function dismissQuickStart() {
     showQuickStart = false;
     if (!browser) return;
     localStorage.setItem(UI_STORAGE_KEYS.quickstartDismissed, '1');
+
+    if (window.matchMedia('(max-width: 639px)').matches) {
+      await tick();
+      const playButton = document.querySelector<HTMLButtonElement>('.player-play-btn');
+      if (playButton) {
+        const buttonTop = playButton.getBoundingClientRect().top + window.scrollY;
+        const top = buttonTop - (window.innerHeight - playButton.offsetHeight) / 2;
+        window.scrollTo({ top, behavior: 'instant' });
+        playButton.focus({ preventScroll: true });
+      }
+    }
   }
 
   $effect(() => {
@@ -524,8 +540,11 @@
 
 {#if showQuickStart}
   <section class="quickstart" aria-labelledby="quickstart-title">
-    <div>
-      <h2 id="quickstart-title" class="quickstart-title">{m.trainer_quickstart_title()}</h2>
+    <details class="quickstart-guide" bind:open={quickStartInstructionsOpen}>
+      <summary class="quickstart-summary">
+        <ChevronRight size={16} aria-hidden="true" />
+        <h2 id="quickstart-title" class="quickstart-title">{m.trainer_quickstart_title()}</h2>
+      </summary>
       <ol class="quickstart-steps">
         <li>{m.trainer_quickstart_step1()}</li>
         <li>{m.trainer_quickstart_step2()}</li>
@@ -539,7 +558,7 @@
           <li>{m.trainer_quickstart_tip3()}</li>
         </ul>
       </details>
-    </div>
+    </details>
     <button type="button" class="btn-ghost" onclick={dismissQuickStart}
       >{m.trainer_quickstart_start()}</button
     >
@@ -1277,6 +1296,36 @@
     background: var(--bg-surface);
   }
 
+  .quickstart-guide {
+    flex: 1 1 18rem;
+    min-width: 0;
+  }
+
+  .quickstart-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .quickstart-summary::marker {
+    content: '';
+  }
+
+  .quickstart-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .quickstart-summary :global(svg) {
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+
+  .quickstart-guide[open] .quickstart-summary :global(svg) {
+    transform: rotate(90deg);
+  }
+
   .quickstart-title {
     margin: 0;
     font-size: var(--text-base);
@@ -1384,6 +1433,24 @@
   }
 
   @media (max-width: 639px) {
+    .quickstart {
+      align-items: center;
+      padding: var(--space-3);
+      gap: var(--space-2);
+    }
+
+    .quickstart-summary {
+      min-height: 2.75rem;
+      padding-block: var(--space-2);
+    }
+
+    .charset-toggle {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.75rem;
+      padding-inline: var(--space-2);
+    }
+
     /* Phones: the two passage actions stack instead of wrapping a full-width
        button beside a narrow one. One width for both, primary first, and no
        flex growth (the base `flex-basis` would stretch a stacked button). */

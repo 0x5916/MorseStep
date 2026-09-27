@@ -417,6 +417,8 @@
 
   .filter-link {
     position: relative;
+    display: inline-flex;
+    align-items: center;
     padding: 0.15rem 0 0.45rem;
     color: var(--text-secondary);
     font-size: var(--text-sm);
@@ -521,6 +523,17 @@
 
     .thread-title {
       font-size: var(--text-base);
+    }
+  }
+
+  @media (max-width: 639px) {
+    .forum-filters {
+      gap: 0.25rem;
+    }
+
+    .filter-link {
+      min-height: 2.75rem;
+      padding: 0.25rem 0.3rem;
     }
   }
 </style>

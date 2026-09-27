@@ -437,7 +437,15 @@
         </div>
       </div>
 
-      <div class="profile-heatmap-scroll" bind:this={heatmapScrollEl}>
+      <p class="profile-heatmap-scroll-hint">{m.profile_heatmap_scroll_hint()}</p>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard scrolling for this region) -->
+      <div
+        class="profile-heatmap-scroll"
+        bind:this={heatmapScrollEl}
+        tabindex="0"
+        role="region"
+        aria-label={m.profile_heatmap_scroll_hint()}
+      >
         <div
           class="profile-heatmap-shell"
           style={`--week-count:${heatmapWeekCount}`}
@@ -651,6 +659,16 @@
     padding-right: 0.15rem;
     scrollbar-gutter: stable both-edges;
   }
+  .profile-heatmap-scroll:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .profile-heatmap-scroll-hint {
+    display: none;
+    margin: 0 0 var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
   .profile-heatmap-shell {
     width: max-content;
   }
@@ -845,6 +863,12 @@
     .profile-header {
       flex-direction: column;
       align-items: flex-start;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .profile-heatmap-scroll-hint {
+      display: block;
     }
   }
 </style>
