@@ -2,11 +2,11 @@
 
 OpenCW is deployed as three Docker containers orchestrated by Docker Compose:
 
-| Service    | Image                            | Port |
-|------------|----------------------------------|------|
-| `db`       | `postgres:18-alpine`             | —    |
-| `backend`  | built from `./backend`           | 8080 |
-| `frontend` | built from `./frontend`          | 3000 |
+| Service    | Image                       | Port |
+|------------|-----------------------------|------|
+| `db`       | `postgres:18.6-alpine3.23`  | —    |
+| `backend`  | built from `./backend`      | 8080 |
+| `frontend` | built from `./frontend`     | 3000 |
 
 Optional profile:
 
@@ -64,7 +64,7 @@ docker compose up -d --build
 ```
 
 Compose will:
-1. Pull `postgres:18-alpine` and start the database.
+1. Pull `postgres:18.6-alpine3.23` and start the database.
 2. Wait for the database healthcheck to pass.
 3. Build and start the backend (Go, distroless image, `GIN_MODE=release`).
 4. Build and start the frontend (SvelteKit Node adapter, `NODE_ENV=production`).
@@ -140,32 +140,41 @@ git pull
 docker compose up -d --build
 ```
 
-Compose will rebuild changed images and recreate only the affected containers. The `pgdata` volume is preserved across updates.
+Compose will rebuild changed images and recreate only the affected containers. PostgreSQL's data persists in the host directory configured by `POSTGRES_DATA_PATH`; it is not a named Compose volume and is not removed by `docker compose down`.
 
 ## 5. Backups
 
-The database is stored in the `opencw_pgdata` Docker volume. Back it up with:
+The root Compose configuration bind-mounts the host directory set by `POSTGRES_DATA_PATH` at `/var/lib/postgresql` in the container. The checked-in `example.env` sets it to `/data/postgres`; Compose falls back to `./data/postgres` if it is unset. PostgreSQL stores its cluster under `/var/lib/postgresql/18/docker`. This is a host path, not a named Docker volume.
+
+Create a portable logical backup with:
 
 ```bash
-docker compose exec db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > opencw_$(date +%F).sql.gz
+set -o pipefail
+docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "opencw_$(date +%F).sql.gz"
 ```
 
-Restore:
+Restore into a running database:
 
 ```bash
-gunzip -c opencw_<date>.sql.gz | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+gunzip -c "opencw_<date>.sql.gz" | docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"'
 ```
+
+Before an image upgrade, also take a consistent filesystem snapshot of `POSTGRES_DATA_PATH` while PostgreSQL is stopped, or follow the storage provider's documented procedure for an application-consistent snapshot. Do not use a raw copy of the live PostgreSQL data directory as a backup.
 
 ## 6. Stopping / removing
 
 Stop without removing data:
+
 ```bash
 docker compose down
 ```
 
-Stop and **delete all data** (destructive):
-```bash
-docker compose down -v
+`docker compose down -v` does not delete the bind-mounted database data. To erase it, stop the stack and manually remove the directory configured by `POSTGRES_DATA_PATH` (irreversible).
+
+The data path can be set in `.env`:
+
+```dotenv
+POSTGRES_DATA_PATH=/data/postgres
 ```
 
 ## Environment variable reference
@@ -175,6 +184,7 @@ docker compose down -v
 | `POSTGRES_USER`   | yes      | PostgreSQL superuser name |
 | `POSTGRES_PASSWORD` | yes    | PostgreSQL superuser password |
 | `POSTGRES_DB`     | yes      | Database name |
+| `POSTGRES_DATA_PATH` | no | Host directory bind-mounted at `/var/lib/postgresql`; `example.env` sets `/data/postgres`, Compose fallback is `./data/postgres`. |
 | `JWT_SECRET`      | yes      | Base64-encoded secret (≥ 32 raw bytes). Backend exits on startup if missing. |
 | `CORS_ORIGINS`    | yes      | Comma-separated allowed browser origins, e.g. `https://opencw.example.com` |
 | `PUBLIC_API_BASE` | yes      | Browser-visible backend URL, baked into the frontend at build time, e.g. `https://api.opencw.example.com/api/v1` |
