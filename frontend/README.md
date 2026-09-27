@@ -78,9 +78,10 @@ forum deep links so shared links open and unfurl correctly.
 ## Internationalization
 
 - Message keys live in `messages/*.json`; all locales must define the same keys.
-- Paraglide output is generated into `src/lib/paraglide/` (gitignored) by the Vite
-  plugin. After changing keys in `messages/*.json`, run `npm run build` (or
-  `npm run check`) before `svelte-check` can resolve new `m.*` imports.
+- Paraglide output is generated into `src/lib/paraglide/` (gitignored) using the
+  shared options in `scripts/paraglide-options.ts`. `npm run check` compiles it
+  before `svelte-check`, and `npm run build` compiles it through the Vite plugin.
+  Run either command after changing keys in `messages/*.json`.
 - URLs are localized (`/de/...`, `/ja/...`, …). Every locale variant is
   prerendered, so the active locale always comes from the URL.
 - Bare paths (`/about`) and legacy `/morse` URLs exist only in the base locale in

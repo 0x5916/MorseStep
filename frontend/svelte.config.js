@@ -2,8 +2,8 @@ import adapter from '@sveltejs/adapter-static';
 import { readFileSync } from 'node:fs';
 import { ROUTE_PATHS } from './src/lib/routes.js';
 
-// Locales are read from the committed inlang project (the generated paraglide
-// runtime is gitignored and does not exist before `vite build` starts).
+// Read locales from committed settings so route generation does not depend on
+// the generated Paraglide runtime being present.
 const { locales } = JSON.parse(
   readFileSync(new URL('./project.inlang/settings.json', import.meta.url), 'utf8')
 );
