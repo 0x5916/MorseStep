@@ -64,6 +64,7 @@ func RouterV1Setup(engine *gin.Engine) {
 	cwProgress.PUT("/progress", progressHandler.AddProgress)
 
 	forumHandler := handlers.ForumHandler{DB: databases.DB}
+	forumCreateRateLimit := middlewares.ForumCreateRateLimit()
 
 	// Forum reads are public.
 	forum := v1.Group("/forum")
@@ -74,8 +75,8 @@ func RouterV1Setup(engine *gin.Engine) {
 	// Creating forum content requires a verified email; deleting requires
 	// ownership (checked in the handlers).
 	forumProtected := protected.Group("/forum")
-	forumProtected.POST("/threads", middlewares.VerifiedRequired(), forumHandler.CreateThread)
-	forumProtected.POST("/threads/:id/replies", middlewares.VerifiedRequired(), forumHandler.CreateReply)
+	forumProtected.POST("/threads", middlewares.VerifiedRequired(), forumCreateRateLimit, forumHandler.CreateThread)
+	forumProtected.POST("/threads/:id/replies", middlewares.VerifiedRequired(), forumCreateRateLimit, forumHandler.CreateReply)
 	forumProtected.DELETE("/threads/:id", forumHandler.DeleteThread)
 	forumProtected.DELETE("/replies/:id", forumHandler.DeleteReply)
 

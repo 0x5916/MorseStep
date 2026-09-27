@@ -826,6 +826,8 @@ curl -X GET http://localhost:8080/v1/forum/threads/<thread_id>/replies
 
 **Authentication**: Bearer JWT (access token) + verified email
 
+**Rate Limiting**: Five thread/reply creation attempts combined per verified user per rolling 60 seconds. Exceeded requests return `429 FORUM_RATE_LIMITED` with a `Retry-After` header containing seconds until the oldest attempt expires.
+
 **Request Body**:
 ```json
 {
@@ -865,6 +867,7 @@ curl -X GET http://localhost:8080/v1/forum/threads/<thread_id>/replies
 | 400    | `INVALID_REQUEST_BODY`  | Invalid request body         |
 | 401    | `AUTH_HEADER_REQUIRED`  | Missing or invalid token     |
 | 403    | `EMAIL_NOT_VERIFIED`    | Email verification required  |
+| 429    | `FORUM_RATE_LIMITED`    | Please wait before creating another forum post |
 | 500    | `FORUM_CREATE_FAILED`   | Failed to create forum thread |
 
 **Example cURL**:
@@ -885,6 +888,8 @@ curl -X POST http://localhost:8080/v1/forum/threads \
 **Create a reply in a thread (optionally nested)**
 
 **Authentication**: Bearer JWT (access token) + verified email
+
+**Rate Limiting**: Five thread/reply creation attempts combined per verified user per rolling 60 seconds. Exceeded requests return `429 FORUM_RATE_LIMITED` with a `Retry-After` header containing seconds until the oldest attempt expires.
 
 **Path Parameters**:
 - `id`: Thread UUID
@@ -929,6 +934,7 @@ curl -X POST http://localhost:8080/v1/forum/threads \
 | 401    | `AUTH_HEADER_REQUIRED`  | Missing or invalid token              |
 | 403    | `EMAIL_NOT_VERIFIED`    | Email verification required           |
 | 404    | `THREAD_NOT_FOUND`      | Thread not found                      |
+| 429    | `FORUM_RATE_LIMITED`    | Please wait before creating another forum post |
 | 500    | `FORUM_CREATE_FAILED`   | Failed to create forum reply          |
 
 **Example cURL**:

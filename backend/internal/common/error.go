@@ -40,6 +40,7 @@ const (
 	ErrorCodeForumQueryFailed        = "FORUM_QUERY_FAILED"
 	ErrorCodeForumCreateFailed       = "FORUM_CREATE_FAILED"
 	ErrorCodeForumDeleteFailed       = "FORUM_DELETE_FAILED"
+	ErrorCodeForumRateLimited        = "FORUM_RATE_LIMITED"
 )
 
 func NewErrorResponse(code string, message string) ErrorResponse {
