@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { ArrowRight } from '@lucide/svelte';
   import { localizedHref as href } from '$lib/i18n.svelte';
   import { SITE_NAME } from '$lib/seo';
   import * as m from '$lib/paraglide/messages';
@@ -18,11 +17,8 @@
   <ul class="row-list">
     <li>
       <a class="row-link tool-row" href={href('/morse/learn')}>
-        <span class="tool-copy">
-          <strong class="tool-title">{m.nav_train()}</strong>
-          <span class="tool-note">{m.home_preview_caption()}</span>
-        </span>
-        <ArrowRight size={16} aria-hidden="true" />
+        <strong class="tool-title">{m.nav_train()}</strong>
+        <span class="tool-note">{m.home_preview_caption()}</span>
       </a>
     </li>
   </ul>
@@ -33,17 +29,15 @@
     margin: var(--space-2) 0 0;
   }
 
+  /* Same shape as the home page's `.dest-row`: title and description are
+     siblings in a wrapping row, so they sit side by side when there is room
+     and drop onto separate lines with the shared gap when there is not. */
   .tool-row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     gap: var(--space-4);
-  }
-
-  .tool-copy {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
+    flex-wrap: wrap;
   }
 
   .tool-title {
@@ -53,6 +47,7 @@
   }
 
   .tool-note {
+    max-width: 32rem;
     font-size: var(--text-sm);
     color: var(--text-muted);
   }

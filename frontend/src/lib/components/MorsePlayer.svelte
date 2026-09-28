@@ -596,8 +596,13 @@
     gap: 0.5rem;
   }
 
+  /* No rule: the card's own header rule sits at the top of this group, so a
+     second hairline here would only mark a sub-group. `.card-title` would draw
+     one under just the label's text width, so it is suppressed. */
   .player-label {
     margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
   }
 
   .player-top {

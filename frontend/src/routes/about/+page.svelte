@@ -142,11 +142,15 @@
     margin-bottom: 0;
   }
 
+  /* Four short labels: two fixed columns so a label never breaks mid-phrase,
+     collapsing to one per row on phones where a two-up row would crowd the
+     targets. */
   .about-toc-list {
-    display: flex;
-    flex-wrap: wrap;
-    /* Row gap keeps room for the expanded targets on the links below. */
-    gap: 0.6rem 1rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* The row gap has to clear the expanded targets below, or neighbouring rows
+       overlap and a tap landing between them is ambiguous. */
+    gap: 0.6rem 1.5rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -169,6 +173,13 @@
     margin-top: var(--section-gap);
     /* Keep anchored sections clear of the sticky navbar. */
     scroll-margin-top: 4.5rem;
+  }
+
+  /* The TOC is part of the page's opening, not a section of the article, so it
+     closes at the block rhythm. `--section-gap` here left the first section
+     floating away from the links that point into it. */
+  .about-toc + .about-section {
+    margin-top: var(--block-gap);
   }
 
   .about-section-icon {
@@ -233,6 +244,10 @@
   }
 
   @media (max-width: 480px) {
+    .about-toc-list {
+      grid-template-columns: 1fr;
+    }
+
     .compare {
       grid-template-columns: 1fr;
     }
@@ -240,6 +255,14 @@
     .compare-col + .compare-col {
       border-left: none;
       border-top: 1px solid var(--border-card);
+    }
+  }
+
+  /* Below the navbar breakpoint the top bar is `display: none`, so the desktop
+     4.5rem clearance only parks the target below a hole of empty page. */
+  @media (max-width: 639px) {
+    .about-section {
+      scroll-margin-top: var(--space-4);
     }
   }
 </style>

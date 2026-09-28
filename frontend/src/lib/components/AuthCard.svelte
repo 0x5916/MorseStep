@@ -30,11 +30,11 @@
     padding: var(--space-6);
   }
 
-  /* `.page-title` already carries the h1 scale; the card only owns the gap. */
+  /* `.page-title` already carries the h1 scale; the card only owns the gap.
+     No rule here: the title and its subtitle are one unit, and the card's own
+     border already bounds the pair. */
   .auth-title {
-    margin-bottom: 0.35rem;
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-2);
   }
 
   .auth-subtitle {

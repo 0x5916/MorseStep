@@ -469,9 +469,10 @@
     margin-bottom: 0;
   }
 
-  /* A thread row is a `.row-link`, so it inherits the shared row spec —
-     hairline separators, row padding, and the floor + 2px amber edge on
-     hover/focus. The list itself only carries the gap to the next block. */
+  /* A thread row is a `.row-link`, so it inherits the shared row spec — row
+     padding and the inset + 2px amber edge on hover/focus. Rows are separated
+     by whitespace, not rules (see `.row-list` in app.css); the list itself only
+     carries the gap to the next block. */
   .thread-list {
     margin-bottom: var(--block-gap);
   }

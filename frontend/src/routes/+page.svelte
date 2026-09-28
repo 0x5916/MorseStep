@@ -109,20 +109,21 @@
     padding-bottom: var(--section-gap);
   }
 
+  /* The page's own title carries no rule: the sticky chrome already bounds it
+     from above, and the lede below belongs to it rather than following it. */
   .masthead-title {
     margin: 0;
-    padding-bottom: var(--space-2);
     max-width: 30rem;
     font-size: var(--text-3xl);
     line-height: var(--leading-tight);
     font-weight: 600;
     letter-spacing: -0.02em;
     color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
   }
 
+  /* The rule used to hold the lede off the heading; the gap does that now. */
   .masthead-lede {
-    margin: var(--space-3) 0 var(--space-5);
+    margin: var(--space-4) 0 var(--space-5);
     max-width: 38rem;
     font-size: var(--text-lg);
     line-height: var(--leading-relaxed);

@@ -438,12 +438,16 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Level three steps down by size and weight alone. Its rule was pixel-identical
+   to `.section-title`'s, so it drew no boundary the section rule had not already
+   drawn — it only striped the page. The type step carries the level instead. */
 .sub-title {
   color: var(--text-primary);
+  font-size: var(--text-lg);
   font-weight: 600;
-  margin: 0 0 var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border);
+  /* The rule used to close off the block above. The section is a flex column
+     with no gap, so the heading needs its own top margin now. */
+  margin: var(--space-6) 0 var(--space-2);
 }
 
 .body-text {
@@ -1037,8 +1041,11 @@ summary:focus-visible,
   color: var(--text-primary);
 }
 
-/* Whole-row link lists rely on whitespace; section headings carry the rules. */
-.row-list {
+/* Whole-row link lists rely on whitespace; section headings carry the rules.
+   `:where()` keeps the reset at zero specificity so it still cancels the UA
+   list margin without also cancelling the page rhythm's `--block-gap` when a
+   list is a page's own child (source order would otherwise decide it). */
+:where(.row-list) {
   list-style: none;
   margin: 0;
   padding: 0;
