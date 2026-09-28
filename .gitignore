@@ -7,3 +7,10 @@ Thumbs.db
 .vscode/settings.json
 
 .env*
+
+# Operational state written by scripts/ (database dumps, last-release record)
+backups/
+.deploy-state
+
+# Live PostgreSQL data directory (bind mount target when POSTGRES_DATA_PATH is unset)
+/data/postgres/

@@ -80,6 +80,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - pgadmin
 
   frontend:
     build:
@@ -90,3 +91,95 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+
+  # One-shot renderer: turns the credentials in .env into pgAdmin's server definition and
+  # .pgpass, then exits. Runs before pgadmin on every `docker compose up -d`.
+  pgadmin-config:
+    image: dpage/pgadmin4:9.18.0
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+    command:
+      - |
+        set -eu
+
+        if [ -z "$$PGADMIN_DEFAULT_EMAIL" ]; then
+          echo "pgadmin-config: PGADMIN_DEFAULT_EMAIL is not set; fill it in .env (see example.env)." >&2
+          exit 1
+        fi
+
+        if [ -z "$$DB_USER" ] || [ -z "$$DB_NAME" ] || [ -z "$$DB_PASSWORD" ]; then
+          echo "pgadmin-config: database credentials are not set; fill them in .env (see example.env)." >&2
+          exit 1
+        fi
+
+        # pgAdmin keeps a per-login storage directory; @ in the login email becomes _.
+        storage_dir="/var/lib/pgadmin/storage/$$(printf '%s' "$$PGADMIN_DEFAULT_EMAIL" | tr '@' '_')"
+        mkdir -p "$$storage_dir"
+
+        cat > /var/lib/pgadmin/servers.json <<EOF
+        {
+          "Servers": {
+            "1": {
+              "Name": "OpenCW",
+              "Group": "Servers",
+              "Host": "db",
+              "Port": 5432,
+              "Username": "$$DB_USER",
+              "MaintenanceDB": "$$DB_NAME",
+              "ConnectionParameters": {
+                "sslmode": "prefer"
+              }
+            }
+          }
+        }
+        EOF
+
+        # libpq matches .pgpass on host:port:database:username:password, so : and \ must be escaped.
+        printf 'db:5432:%s:%s:%s\n' "$$DB_NAME" "$$DB_USER" "$$(printf '%s' "$$DB_PASSWORD" | sed 's/[\\:]/\\&/g')" > "$$storage_dir/.pgpass"
+        chmod 600 "$$storage_dir/.pgpass"
+
+        echo "pgadmin-config: rendered servers.json and $$storage_dir/.pgpass"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  pgadmin:
+    image: dpage/pgadmin4:9.18.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      pgadmin-config:
+        condition: service_completed_successfully
+    ports:
+      # Loopback only. Public access is through the Cloudflare tunnel at
+      # https://pgadmin.opencw.net, guarded by a Zero Trust Access policy.
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_DISABLE_POSTFIX: "True"
+      PGADMIN_SERVER_JSON_FILE: /var/lib/pgadmin/servers.json
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_CONFIG_PROXY_X_FOR_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_HOST_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PORT_COUNT: "1"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /venv/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:80/misc/ping')"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  pgadmin_data:
