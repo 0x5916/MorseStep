@@ -53,10 +53,6 @@
   let volume = $state(1);
   let startDelay = $state(0.5);
   let autoSyncTimeout: ReturnType<typeof setTimeout> | null = null;
-  // Attempts for this visit only: the durable record lives in the progress
-  // queue and on the profile page. The strip exists so a practice session has a
-  // visible shape without touching any stored data.
-  let attempts = $state<number[]>([]);
   let playing = $state(false);
 
   // Two distinct practices share this page: drilling a single character and
@@ -209,7 +205,6 @@
     // A pending discard stops being pending once the copy has been checked.
     newExerciseArmed = false;
     if (newExerciseTimer) clearTimeout(newExerciseTimer);
-    attempts = [...attempts, result].slice(-20);
     if (result > 0) {
       saveProgressOfflineFirst({
         lesson: chosenLesson,
@@ -223,11 +218,6 @@
   let hasNextLesson = $derived(result >= SCORE_GOOD && chosenLesson < LESSONS.length);
   let hasPrevLesson = $derived(result < SCORE_OK && chosenLesson > 1);
 
-  let attemptCount = $derived(attempts.length);
-  let bestAttempt = $derived(attempts.reduce((best, value) => Math.max(best, value), 0));
-  let averageAttempt = $derived(
-    attempts.length === 0 ? 0 : attempts.reduce((sum, value) => sum + value, 0) / attempts.length
-  );
   // Set composition, used by the lesson card and the character-set popover.
   const isLetter = (char: string) => /[A-Z]/.test(char);
   const isNumber = (char: string) => /[0-9]/.test(char);
@@ -645,35 +635,9 @@
         </div>
       </details>
 
-      <hr class="side-divider" />
-
-      <!-- Only the passage produces results, so the drill keeps this section
-           out of the way unless there is something to see from a copy. -->
-      {#if mode === 'passage' || attemptCount > 0}
-        <h3 class="panel-label">{m.trainer_session_title()}</h3>
-        {#if attemptCount === 0}
-          <p class="side-note">{m.trainer_session_empty()}</p>
-        {:else}
-          <div class="session-metrics">
-            <div class="metric">
-              <span class="metric-label">{m.trainer_metric_attempts()}</span>
-              <span class="metric-value">{attemptCount}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">{m.trainer_metric_best()}</span>
-              <span class="metric-value">{percentage(bestAttempt)}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">{m.trainer_metric_average()}</span>
-              <span class="metric-value">{percentage(averageAttempt)}</span>
-            </div>
-          </div>
-        {/if}
-      {/if}
       {#if !$user}
-        <GuestNotice class="side-note" />
+        <GuestNotice class="body-text" />
       {/if}
-      <a class="session-link" href={href('/profile')}>{m.trainer_session_link()}</a>
     </section>
   </aside>
 
@@ -940,13 +904,6 @@
   }
 
   .side-panel :global(.card-title) {
-    margin: 0;
-  }
-
-  .side-divider {
-    width: 100%;
-    border: none;
-    border-top: 1px solid var(--border);
     margin: 0;
   }
 
@@ -1251,37 +1208,10 @@
     color: var(--text-secondary);
   }
 
-  .side-note {
-    margin: 0;
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-  }
-
   /* Panels never let their contents spill into a neighbouring column. */
   .side-panel,
   .console {
     min-width: 0;
-  }
-
-  .session-metrics {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-
-  .session-link {
-    align-self: flex-start;
-    /* Grows the link to a full-size target without moving it in the sidebar. */
-    padding: 0.3rem;
-    margin: -0.3rem;
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-    text-decoration: none;
-  }
-
-  .session-link:hover {
-    color: var(--accent);
-    text-decoration: underline;
   }
 
   /* Onboarding strip: inline and dismissible, never a modal over practice. */
