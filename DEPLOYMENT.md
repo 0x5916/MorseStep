@@ -326,7 +326,8 @@ POSTGRES_DATA_PATH=/data/postgres
 ## Operational scripts
 
 The scripts in `scripts/` are the source of truth; the `Makefile` only forwards to them. All of
-them are safe to run repeatedly.
+them are safe to run repeatedly. [scripts/README.md](scripts/README.md) has task-oriented guidance,
+the safety model, cron examples and troubleshooting.
 
 | Script | Make target | Purpose |
 |--------|-------------|---------|
@@ -345,8 +346,8 @@ Notes:
 - `.env` is **parsed, never sourced**. It contains values with spaces
   (`RESEND_FROM_EMAIL=OpenCW <no-reply@example.com>`), and sourcing the file would try to execute
   them.
-- `status.sh` exits non-zero when `db`, `backend` or `frontend` is unhealthy, so it can be used
-  directly as a cron or monitoring check.
+- `status.sh` exits non-zero when `.env` is invalid or when `db`, `backend`, `frontend` or
+  `pgadmin` is not running and healthy, so it can be used directly as a cron or monitoring check.
 - `check-env.sh` warns when `CLOUDFLARED_TUNNEL_TOKEN` is empty, because `cloudflared` has no
   `profiles:` key: it starts with the default stack and will restart-loop without a token.
 - `backup.sh` is safe to schedule. Dumps live in `backups/`, which is git-ignored along with the

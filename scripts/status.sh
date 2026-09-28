@@ -8,6 +8,10 @@
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
+# Read-only report: --dry-run would suppress every docker call and make a healthy
+# stack look like it was never created, so it is deliberately not accepted.
+COMMON_OPTS=()
+
 usage() {
   print_help \
     "Report service health, versions, and disk usage for the OpenCW stack." \
@@ -20,7 +24,6 @@ SKIP_DISK=0
 while (( $# )); do
   case "$1" in
     --skip-disk) SKIP_DISK=1 ;;
-    --dry-run) DRY_RUN=1 ;;
     -h|--help)
       usage
       exit 0

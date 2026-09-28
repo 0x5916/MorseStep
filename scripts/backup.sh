@@ -12,6 +12,9 @@
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
+# backup.sh never prompts, so it has no --yes.
+COMMON_OPTS=('--dry-run')
+
 KEEP="${BACKUP_RETENTION:-14}"
 WITH_GLOBALS=1
 PRINT_PATH=0

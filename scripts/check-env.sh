@@ -11,6 +11,9 @@
 set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
+# Read-only validation: neither --dry-run nor --yes means anything here.
+COMMON_OPTS=()
+
 QUIET=0
 
 usage() {

@@ -41,10 +41,10 @@ BACKUP_DIR="${BACKUP_DIR:-${ROOT_DIR}/backups}"
 STATE_FILE="${STATE_FILE:-${ROOT_DIR}/.deploy-state}"
 
 # Published ports and endpoints probed by deploy.sh, update.sh and status.sh.
-# Overridable for a host that remaps the Compose port bindings.
+# API_PORT and FRONTEND_PORT mirror the fixed bindings in docker-compose.yaml;
+# PGADMIN_PORT is resolved after env_get is available, because .env can override it.
 API_PORT="${API_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-PGADMIN_PORT="${PGADMIN_PORT:-5050}"
 
 # --- logging ----------------------------------------------------------------
 
@@ -75,9 +75,15 @@ die()    { printf '%s[%s] error:%s %s\n' "${C_RED}" "$(_script_name)" "${C_RESET
 
 # --- help -------------------------------------------------------------------
 
+# Common options advertised by --help. Scripts that do not implement one of these
+# narrow the list, so the help text can never advertise a flag the argument
+# parser would reject: read-only scripts drop both, backup.sh keeps only
+# --dry-run.
+COMMON_OPTS=('--dry-run' '--yes')
+
 # print_help <description> <usage> [option line...]
 print_help() {
-  local description="$1" usage="$2"
+  local description="$1" usage="$2" opt
   shift 2
   printf '%s\n\n' "${description}"
   printf 'Usage: %s\n' "${usage}"
@@ -85,13 +91,17 @@ print_help() {
   if (( $# )); then
     printf '  %s\n' "$@"
   fi
-  cat <<'EOF'
-  -h, --help            show this help and exit
-
-Common options:
-  --dry-run             print the commands that would run, change nothing
-  --yes                 assume "yes" for confirmation prompts
-EOF
+  printf '  -h, --help            show this help and exit\n'
+  if (( ${#COMMON_OPTS[@]} )); then
+    printf '\nCommon options:\n'
+    for opt in "${COMMON_OPTS[@]}"; do
+      case ${opt} in
+        --dry-run) printf '  --dry-run             print the commands that would run, change nothing\n' ;;
+        --yes) printf '  --yes                 assume "yes" for confirmation prompts\n' ;;
+        *) printf '  %s\n' "${opt}" ;;
+      esac
+    done
+  fi
 }
 
 # --- flags ------------------------------------------------------------------
@@ -285,6 +295,17 @@ base64_decoded_bytes() {
     return 1
   fi
 }
+
+# --- ports ------------------------------------------------------------------
+
+# Resolve PGADMIN_PORT the way Compose does: an explicit environment value wins,
+# then the value in .env, then 5050. Without the .env lookup, changing
+# PGADMIN_PORT there would leave the pgAdmin probes in deploy.sh, update.sh and
+# status.sh hitting the old port and reporting a healthy service as down.
+if [[ -z ${PGADMIN_PORT:-} && -f ${ENV_FILE} ]]; then
+  PGADMIN_PORT="$(env_get PGADMIN_PORT || true)"
+fi
+PGADMIN_PORT="${PGADMIN_PORT:-5050}"
 
 # --- HTTP probing -----------------------------------------------------------
 

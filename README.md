@@ -65,7 +65,10 @@ for the full list.
 | Health, versions and disk usage | `make status` |
 
 Each script also runs standalone and documents its own options, for example
-`scripts/restore.sh --help`. The underlying `docker compose` commands still work:
+`scripts/restore.sh --help`. See [scripts/README.md](scripts/README.md) for the full guide, including
+the safety model, cron examples and troubleshooting.
+
+The underlying `docker compose` commands still work:
 
 Start / rebuild:
 
