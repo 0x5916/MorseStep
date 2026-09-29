@@ -152,7 +152,7 @@ fail_update() {
   exit 1
 }
 
-# --- 1. record the current state -------------------------------------------
+# --- 1. record the current state and check the preconditions ---------------
 
 if [[ ${DRY_RUN} == 0 ]]; then
   if [[ -n "$( cd -- "${ROOT_DIR}" && git status --porcelain --untracked-files=no )" ]]; then
@@ -165,6 +165,23 @@ PREV_BRANCH="$( cd -- "${ROOT_DIR}" && git rev-parse --abbrev-ref HEAD )"
 stamp="$(now_utc)"
 
 info "current revision: ${PREV_REF:0:12} (${PREV_BRANCH})"
+
+# Resolve where we are going before doing any work: a run that cannot move to a
+# revision should not snapshot images and take a database backup first. UPSTREAM
+# is reused by step 3.
+UPSTREAM=''
+if [[ -z ${REF} ]]; then
+  # A detached HEAD has no upstream, so `git pull` cannot work. That is the state
+  # a rollback leaves behind, so name the branch to return to rather than
+  # reporting a bare missing-upstream error.
+  if [[ ${PREV_BRANCH} == HEAD ]]; then
+    die "the checkout is in a detached HEAD state (a rollback leaves it that way), which has no upstream to pull. Return to a branch first: git -C ${ROOT_DIR} checkout $(resume_branch)"
+  fi
+  UPSTREAM="$( cd -- "${ROOT_DIR}" && git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true )"
+  if [[ -z ${UPSTREAM} ]]; then
+    die "'${PREV_BRANCH}' has no upstream branch; pass a revision explicitly with --ref"
+  fi
+fi
 
 # Snapshot the images that are about to be replaced so a rollback has something
 # to restore. Compose derives the names; only existing local images can be tagged.
@@ -211,17 +228,7 @@ if [[ -n ${REF} ]]; then
   git_step "fetching" fetch --all --tags --prune
   git_step "checking out ${REF}" checkout "${REF}"
 else
-  # A detached HEAD has no upstream, so `git pull` cannot work. That is the state
-  # a rollback leaves behind, so name the branch to return to rather than
-  # reporting a bare missing-upstream error.
-  if [[ ${PREV_BRANCH} == HEAD ]]; then
-    die "the checkout is in a detached HEAD state (a rollback leaves it that way), which has no upstream to pull. Return to a branch first: git -C ${ROOT_DIR} checkout $(resume_branch)"
-  fi
-  upstream="$( cd -- "${ROOT_DIR}" && git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true )"
-  if [[ -z ${upstream} ]]; then
-    die "'${PREV_BRANCH}' has no upstream branch; pass a revision explicitly with --ref"
-  fi
-  git_step "pulling ${upstream} (fast-forward only)" pull --ff-only
+  git_step "pulling ${UPSTREAM} (fast-forward only)" pull --ff-only
 fi
 
 if [[ ${DRY_RUN} == 1 ]]; then
