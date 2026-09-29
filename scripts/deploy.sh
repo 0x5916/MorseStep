@@ -97,9 +97,15 @@ failed=0
 wait_service_healthy db "${TIMEOUT}" || failed=1
 wait_service_healthy backend "${TIMEOUT}" || failed=1
 wait_service_healthy frontend "${TIMEOUT}" || failed=1
-wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || failed=1
-wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || failed=1
-wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
+# Only probe over HTTP once the containers themselves are up. Probing an endpoint
+# whose container has already failed just burns the full timeout.
+if (( failed )); then
+  warn "skipping the HTTP probes because a container did not become healthy"
+else
+  wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || failed=1
+  wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || failed=1
+  wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
+fi
 
 if (( failed )); then
   warn "some services did not come up cleanly"

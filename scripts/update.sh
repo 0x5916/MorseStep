@@ -107,8 +107,24 @@ print_rollback_help() {
       printf '  scripts/restore.sh --file %s\n\n' "${PREV_BACKUP}"
     fi
     printf 'AutoMigrate runs at backend startup and is forward-only, so an image rollback does\n'
-    printf 'not undo schema changes. Re-run with --auto-rollback to do the image part for you.\n'
+    printf 'not undo schema changes. Re-run with --auto-rollback to do the image part for you.\n\n'
+    printf 'The rollback leaves the checkout on a detached HEAD, so before your next update\n'
+    printf 'return to a branch (and fix whatever the failure was, e.g. .env):\n\n'
+    printf '  git -C %s checkout %s\n' "${ROOT_DIR}" "$(resume_branch)"
   } >&2
+}
+
+# Branch to tell the operator to return to: the one recorded by the last
+# successful update, falling back to main. Reads "HEAD" when the checkout is
+# already detached.
+resume_branch() {
+  local branch
+  branch="$(state_get PREV_BRANCH || true)"
+  if [[ -z ${branch} || ${branch} == HEAD ]]; then
+    printf 'main'
+  else
+    printf '%s' "${branch}"
+  fi
 }
 
 fail_update() {
@@ -195,6 +211,12 @@ if [[ -n ${REF} ]]; then
   git_step "fetching" fetch --all --tags --prune
   git_step "checking out ${REF}" checkout "${REF}"
 else
+  # A detached HEAD has no upstream, so `git pull` cannot work. That is the state
+  # a rollback leaves behind, so name the branch to return to rather than
+  # reporting a bare missing-upstream error.
+  if [[ ${PREV_BRANCH} == HEAD ]]; then
+    die "the checkout is in a detached HEAD state (a rollback leaves it that way), which has no upstream to pull. Return to a branch first: git -C ${ROOT_DIR} checkout $(resume_branch)"
+  fi
   upstream="$( cd -- "${ROOT_DIR}" && git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true )"
   if [[ -z ${upstream} ]]; then
     die "'${PREV_BRANCH}' has no upstream branch; pass a revision explicitly with --ref"
@@ -231,9 +253,15 @@ else
   wait_service_healthy db "${TIMEOUT}" || verified=0
   wait_service_healthy backend "${TIMEOUT}" || verified=0
   wait_service_healthy frontend "${TIMEOUT}" || verified=0
-  wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || verified=0
-  wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || verified=0
-  wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
+  # Only probe over HTTP once the containers themselves are up. Probing an
+  # endpoint whose container has already failed just burns the full timeout.
+  if (( verified )); then
+    wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || verified=0
+    wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || verified=0
+    wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
+  else
+    warn "skipping the HTTP probes because a container did not become healthy"
+  fi
 
   if (( verified == 0 )); then
     fail_update

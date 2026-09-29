@@ -245,10 +245,11 @@ collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwri
 | `POSTGRES_DATA_PATH is unset` warning | `example.env` value not copied | Set it in `.env`, or accept the in-repo `./data/postgres` default |
 | `pgAdmin: no response` but the UI opens in a browser | `PGADMIN_PORT` changed in `.env` | Already handled — the scripts read it from `.env`. Restart nothing; re-run `make status` |
 | `there are uncommitted changes` | Dirty tree, by design | Commit or stash, or use `git -C . stash` first |
-| `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend`. A container that has restarted twice is reported as crash-looping immediately rather than waiting out the timeout |
+| `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend`. A container that has restarted twice is reported as crash-looping immediately, and the HTTP probes are skipped, so a bad release fails in seconds rather than waiting out the timeouts |
 | `the pre-update backup failed; aborting` | Database down or disc full | Fix the cause; nothing was changed |
 | `could not snapshot <image>` | Image not built locally yet | Harmless on a first update; the backup is still your safety net |
 | `'main' has no upstream branch` | Branch is not tracking a remote | `git branch --set-upstream-to=origin/main`, or pass `--ref` |
+| `detached HEAD state ... has no upstream to pull` | An earlier rollback detached the checkout | `git checkout main` (or the branch named in the message), then re-run |
 
 ## Design notes
 
