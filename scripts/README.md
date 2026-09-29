@@ -216,8 +216,13 @@ created.
 | `.deploy-state` | `update.sh` | Last release: `UPDATED_AT`, `NEW_REF`, `PREV_REF`, `PREV_BRANCH`, `PREV_BACKUP`, `SNAPSHOTS` |
 
 `backups/` and `.deploy-state` are git-ignored. Image snapshots are tagged
-`<image>:pre-<UTC timestamp>` and are never deleted automatically — review them with
+`<image>:pre-<UTC timestamp>` and cover only the images Compose builds here (backend and
+frontend) — pulled images such as `postgres` or `pgadmin4` are not retagged, because an update
+does not replace them. Snapshots are never deleted automatically; review them with
 `docker images | grep pre-` and remove what you no longer need.
+
+Because dump names have one-second resolution, two backups inside the same second would
+collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwriting the first.
 
 ## Environment overrides
 
@@ -240,7 +245,7 @@ created.
 | `POSTGRES_DATA_PATH is unset` warning | `example.env` value not copied | Set it in `.env`, or accept the in-repo `./data/postgres` default |
 | `pgAdmin: no response` but the UI opens in a browser | `PGADMIN_PORT` changed in `.env` | Already handled — the scripts read it from `.env`. Restart nothing; re-run `make status` |
 | `there are uncommitted changes` | Dirty tree, by design | Commit or stash, or use `git -C . stash` first |
-| `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend` |
+| `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend`. A container that has restarted twice is reported as crash-looping immediately rather than waiting out the timeout |
 | `the pre-update backup failed; aborting` | Database down or disc full | Fix the cause; nothing was changed |
 | `could not snapshot <image>` | Image not built locally yet | Harmless on a first update; the backup is still your safety net |
 | `'main' has no upstream branch` | Branch is not tracking a remote | `git branch --set-upstream-to=origin/main`, or pass `--ref` |

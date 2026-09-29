@@ -186,8 +186,9 @@ make update          # or: scripts/update.sh
 ```
 
 1. Refuses to run when the working tree has uncommitted changes.
-2. Tags the running images as `<image>:pre-<UTC timestamp>` so the previous release can be
-   restored, and records them in `.deploy-state`.
+2. Tags the images it builds (`opencw-backend`, `opencw-frontend`) as
+   `<image>:pre-<UTC timestamp>` so the previous release can be restored, and records them in
+   `.deploy-state`. Images that are merely pulled from a registry are not retagged.
 3. Takes a database backup (skip with `--no-backup`).
 4. Fetches, then fast-forwards the current branch. `--ref <branch|tag|commit>` checks out
    something else instead.

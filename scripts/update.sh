@@ -173,7 +173,7 @@ else
     else
       warn "could not snapshot ${image} as ${snap}; rollback will not include it"
     fi
-  done < <(list_stack_images)
+  done < <(built_stack_images)
 fi
 
 # --- 2. back up before touching anything ------------------------------------

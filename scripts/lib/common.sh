@@ -200,8 +200,23 @@ compose() {
   ( cd -- "${ROOT_DIR}" && docker compose -f "${COMPOSE_FILE}" "$@" )
 }
 
-# Image references Compose resolves for the built services, one per line.
+# Image references the Compose configuration resolves, one per line. This
+# includes images merely pulled from a registry (postgres, pgadmin4, cloudflared).
 list_stack_images() { compose config --images; }
+
+# Just the images Compose builds from source in this checkout, i.e. the ones an
+# update actually replaces and the only ones worth snapshotting for a rollback.
+# A pulled image carries a RepoDigest; a locally built one does not, which tells
+# them apart without parsing the Compose file.
+built_stack_images() {
+  local image digest
+  while IFS= read -r image; do
+    [[ -n ${image} ]] || continue
+    digest="$(docker image inspect -f '{{join .RepoDigests " "}}' "${image}" 2>/dev/null || true)"
+    [[ -n ${digest} ]] && continue
+    printf '%s\n' "${image}"
+  done < <(list_stack_images)
+}
 
 git_in_root() { ( cd -- "${ROOT_DIR}" && git "$@" ); }
 
@@ -312,10 +327,13 @@ PGADMIN_PORT="${PGADMIN_PORT:-5050}"
 # http_ok <url> [timeout] - true when the URL answers with a success status.
 http_ok() {
   local url="$1" timeout="${2:-5}"
+  # The return code is the signal. curl's own diagnostics are suppressed because
+  # polling a service that is still starting would otherwise spam stderr with
+  # "Recv failure: Connection reset by peer" on every attempt.
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS -o /dev/null --max-time "${timeout}" "${url}"
+    curl -fs -o /dev/null --max-time "${timeout}" "${url}" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O /dev/null --timeout="${timeout}" "${url}"
+    wget -q -o /dev/null --timeout="${timeout}" "${url}" 2>/dev/null
   else
     die "need curl or wget to probe ${url}"
   fi
@@ -324,11 +342,13 @@ http_ok() {
 # --- container / service waits ---------------------------------------------
 
 # container_state <service> - "not created", or "<status> (health: <health>)".
+# Uses -a so one-shot services that have already run (pgadmin-config) report
+# "exited" rather than looking like they were never started.
 container_state() {
   local service="$1" cid state health
   # sed rather than `head -n 1`: head would close the pipe early and, under
   # `set -o pipefail`, trip the caller on a perfectly healthy stack.
-  cid="$(compose ps -q "${service}" 2>/dev/null | sed -n '1p' || true)"
+  cid="$(compose ps -aq "${service}" 2>/dev/null | sed -n '1p' || true)"
   if [[ -z ${cid} ]]; then
     printf 'not created\n'
     return 0
@@ -348,22 +368,37 @@ wait_service_healthy() {
   fi
   start="$(date +%s)"
   while :; do
-    cid="$(compose ps -q "${service}" 2>/dev/null | sed -n '1p' || true)"
+    cid="$(compose ps -aq "${service}" 2>/dev/null | sed -n '1p' || true)"
     if [[ -n ${cid} ]]; then
       state="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || true)"
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}" 2>/dev/null || true)"
-      if [[ ${state} == running ]]; then
-        case ${health} in
-          healthy|none)
-            ok "${service} is running (health: ${health})"
-            return 0
-            ;;
-          unhealthy)
-            warn "${service} reported unhealthy"
-            return 1
-            ;;
-        esac
+      # A restart loop is a definite failure, so report it in seconds instead of
+      # burning the whole timeout (a bad JWT_SECRET or database URL crash-loops
+      # the backend, and waiting out 240s twice per service is painful).
+      local restarts
+      restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || printf 0)"
+      if (( restarts >= 2 )); then
+        warn "${service} is crash-looping (${restarts} restarts); see: docker compose logs ${service}"
+        return 1
       fi
+      case ${state} in
+        running)
+          case ${health} in
+            healthy|none)
+              ok "${service} is running (health: ${health})"
+              return 0
+              ;;
+            unhealthy)
+              warn "${service} reported unhealthy"
+              return 1
+              ;;
+          esac
+          ;;
+        exited|dead)
+          warn "${service} has exited; see: docker compose logs ${service}"
+          return 1
+          ;;
+      esac
     fi
     now="$(date +%s)"
     if (( now - start >= timeout )); then
