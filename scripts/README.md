@@ -47,8 +47,8 @@ make check
 ```
 
 Reports **every** problem in `.env` in one pass, then lists warnings for things that work but are
-likely to bite later (empty tunnel token, weak passwords, an empty `RESEND_API_KEY`). Exits `0` when
-only warnings are found, `1` when something must be fixed.
+likely to bite later (empty tunnel token, weak passwords, an unset `POSTGRES_DATA_PATH`). Exits `0`
+when only warnings are found, `1` when something must be fixed.
 
 ### Update the deployment
 

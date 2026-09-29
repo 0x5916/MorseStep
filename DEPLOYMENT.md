@@ -47,6 +47,12 @@ POSTGRES_DB=opencw
 # Must be base64-encoded bytes (≥ 32 raw bytes).
 JWT_SECRET=<output of: openssl rand -base64 32>
 
+# Resend credentials. The backend validates both on startup and exits if either is
+# empty, so a blank RESEND_API_KEY crash-loops the container rather than merely
+# disabling email delivery.
+RESEND_API_KEY=<your Resend API key>
+RESEND_FROM_EMAIL=OpenCW <no-reply@your-domain.example>
+
 # Comma-separated list of origins the browser sends the API requests from.
 # Set this to your public frontend URL(s), e.g.:
 CORS_ORIGINS=https://opencw.example.com
@@ -365,8 +371,10 @@ Notes:
 | `PGADMIN_DEFAULT_PASSWORD` | yes | Password for the pgAdmin web UI login, read when pgAdmin's configuration database is first created. |
 | `PGADMIN_PORT` | no | Host port for the pgAdmin UI, published on `127.0.0.1` only, default `5050`. |
 | `JWT_SECRET`      | yes      | Base64-encoded secret (≥ 32 raw bytes). Backend exits on startup if missing. |
+| `RESEND_API_KEY`  | yes      | Resend API key, declared `required:"true"` in `backend/internal/configs/config.go`. The backend exits on startup when it is empty, so a blank value crash-loops the container. |
+| `RESEND_FROM_EMAIL` | yes    | From address for transactional email, e.g. `OpenCW <no-reply@example.com>`. Same startup validation as `RESEND_API_KEY`. |
 | `CORS_ORIGINS`    | yes      | Comma-separated allowed browser origins, e.g. `https://opencw.example.com` |
-| `PUBLIC_API_BASE` | yes      | Browser-visible backend URL, baked into the frontend at build time, e.g. `https://api.opencw.example.com/api/v1` |
+| `PUBLIC_API_BASE` | yes      | Browser-visible backend URL, baked into the frontend at build time, e.g. `https://api.opencw.example.com/v1` |
 | `READ_TIMEOUT` | no | Backend request read timeout (Go duration), default `15s` |
 | `READ_HEADER_TIMEOUT` | no | Backend header read timeout, default `5s` |
 | `WRITE_TIMEOUT` | no | Backend response write timeout, default `30s` |

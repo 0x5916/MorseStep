@@ -79,7 +79,13 @@ target="${BACKUP_DIR}/opencw_${stamp}.sql.gz"
 partial="${target}.partial"
 
 # A failed pg_dump must never leave a file that looks like a usable dump.
-cleanup_partial() { [[ -f ${partial} ]] && rm -f -- "${partial}"; }
+# Returns 0 unconditionally: this runs as an EXIT trap while errexit is active, so
+# a non-zero result here would turn a successful backup into exit status 1 -- which
+# update.sh reads as a failed pre-update backup and aborts the whole update on.
+cleanup_partial() {
+  [[ -f ${partial} ]] || return 0
+  rm -f -- "${partial}"
+}
 trap cleanup_partial EXIT
 
 if [[ ${DRY_RUN} == 1 ]]; then

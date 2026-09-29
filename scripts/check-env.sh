@@ -49,11 +49,16 @@ problems=()
 warnings=()
 
 # Required for `docker compose` interpolation in the root docker-compose.yaml.
+# RESEND_API_KEY / RESEND_FROM_EMAIL are not just for email delivery:
+# backend/internal/configs/config.go declares them `required:"true"` and calls
+# os.Exit(1) when validation fails, so an empty value crash-loops the backend.
 REQUIRED=(
   POSTGRES_USER
   POSTGRES_PASSWORD
   POSTGRES_DB
   JWT_SECRET
+  RESEND_API_KEY
+  RESEND_FROM_EMAIL
   CORS_ORIGINS
   PUBLIC_API_BASE
   PGADMIN_DEFAULT_EMAIL
@@ -105,10 +110,6 @@ fi
 
 if [[ -z "$(value_of POSTGRES_DATA_PATH)" ]]; then
   warnings+=("POSTGRES_DATA_PATH is unset; Compose falls back to ./data/postgres inside the repo")
-fi
-
-if [[ -z "$(value_of RESEND_API_KEY)" ]]; then
-  warnings+=("RESEND_API_KEY is empty; password-reset and verification emails will not be delivered")
 fi
 
 pg_password="$(value_of POSTGRES_PASSWORD)"

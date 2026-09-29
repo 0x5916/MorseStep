@@ -103,6 +103,8 @@ See [example.env](example.env) for the full list. Required variables:
 - POSTGRES_PASSWORD
 - POSTGRES_DB
 - JWT_SECRET (must be base64)
+- RESEND_API_KEY
+- RESEND_FROM_EMAIL
 - CORS_ORIGINS
 - PUBLIC_API_BASE
 - PGADMIN_DEFAULT_EMAIL (pgAdmin login, not a database role)
