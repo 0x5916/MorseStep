@@ -249,7 +249,7 @@ collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwri
 | `the pre-update backup failed; aborting` | Database down or disc full | Fix the cause; nothing was changed |
 | `could not snapshot <image>` | Image not built locally yet | Harmless on a first update; the backup is still your safety net |
 | `'main' has no upstream branch` | Branch is not tracking a remote | `git branch --set-upstream-to=origin/main`, or pass `--ref` |
-| `detached HEAD state ... has no upstream to pull` | An earlier rollback detached the checkout | `git checkout main` (or the branch named in the message), then re-run |
+| `detached HEAD state ... has no upstream to pull` | An earlier rollback detached the checkout | `git checkout main`, then re-run — or jump straight back with `scripts/update.sh --ref main` |
 
 ## Design notes
 
