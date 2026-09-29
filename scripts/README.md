@@ -250,6 +250,7 @@ collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwri
 | `could not snapshot <image>` | Image not built locally yet | Harmless on a first update; the backup is still your safety net |
 | `'main' has no upstream branch` | Branch is not tracking a remote | `git branch --set-upstream-to=origin/main`, or pass `--ref` |
 | `detached HEAD state ... has no upstream to pull` | An earlier rollback detached the checkout | `git checkout main`, then re-run — or jump straight back with `scripts/update.sh --ref main` |
+| pgAdmin rejects the login from `.env` | pgAdmin stores its admin account when its config database is first created, in the `opencw_pgadmin_data` volume, and ignores `PGADMIN_DEFAULT_*` after that. If the volume is older than your last `.env` edit, the password there is not the one in effect | Reset it in place: `docker compose exec pgadmin /venv/bin/python3 /pgadmin4/setup.py update-user "$PGADMIN_DEFAULT_EMAIL" --password '<new>' --role Administrator`. See DEPLOYMENT.md §5 |
 
 ## Design notes
 

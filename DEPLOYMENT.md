@@ -239,6 +239,22 @@ confusing errors, so keep them straight:
 Symptoms: if the pgAdmin page itself rejects you it is login #1; if pgAdmin opens but the server
 reports `password authentication failed for user "…"` it is login #2.
 
+### Resetting the pgAdmin login
+
+Because the account is stored in the `pgadmin_data` volume when it is first created, a password
+that was changed in `.env` afterwards will not work. Reset it in place, which keeps pgAdmin's own
+settings, saved servers and preferences:
+
+```bash
+docker compose exec pgadmin /venv/bin/python3 /pgadmin4/setup.py update-user \
+  "$PGADMIN_DEFAULT_EMAIL" --password '<new-password>' --role Administrator
+```
+
+The change takes effect immediately; no restart is needed. Deleting the `pgadmin_data` volume also
+works but discards those settings — either way the `pgadmin-config` service re-renders
+`servers.json` and `.pgpass` on the next `docker compose up -d`, so the database connection comes
+back on its own.
+
 ### How the connection is pre-configured
 
 The one-shot `pgadmin-config` service renders two files into the `pgadmin_data` volume before
