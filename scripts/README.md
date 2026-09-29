@@ -92,15 +92,16 @@ scripts/status.sh --skip-disk    # faster, when you only care about services
 
 ### Run as a cron job
 
-`backup.sh` and `status.sh` are designed for unattended use. Always use absolute paths — cron's
-`PATH` is minimal.
+`backup.sh` and `status.sh` are designed for unattended use. Point cron at the absolute path of your
+checkout — the scripts find the repository root themselves, so no `cd` is needed, and `docker` and
+`openssl` are already on cron's default `PATH`.
 
 ```cron
 # Nightly logical backup at 03:15
-15 3 * * * cd /opt/opencw && /opt/opencw/scripts/backup.sh >> /var/log/opencw-backup.log 2>&1
+15 3 * * * /path/to/opencw/scripts/backup.sh >> /var/log/opencw-backup.log 2>&1
 
 # Every 5 minutes, alert when something is unhealthy (status.sh exits non-zero)
-*/5 * * * * cd /opt/opencw && /opt/opencw/scripts/status.sh --skip-disk >/dev/null 2>&1 || /usr/local/bin/notify
+*/5 * * * * /path/to/opencw/scripts/status.sh --skip-disk >/dev/null 2>&1 || /usr/local/bin/notify
 ```
 
 ## Safety model
