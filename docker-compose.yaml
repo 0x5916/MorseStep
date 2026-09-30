@@ -9,38 +9,54 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/18/docker
+      # Read by db/tune.sh, which derives the server settings from the resources this
+      # container actually has before PostgreSQL starts. All optional; see example.env
+      # and the "PostgreSQL resource tuning" section of DEPLOYMENT.md.
+      POSTGRES_MEMORY_LIMIT: ${POSTGRES_MEMORY_LIMIT:-0}
+      POSTGRES_CPU_LIMIT: ${POSTGRES_CPU_LIMIT:-0}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-100}
+      POSTGRES_HOST_MEMORY_SHARE: ${POSTGRES_HOST_MEMORY_SHARE:-50}
+      POSTGRES_TUNE_DISABLE: ${POSTGRES_TUNE_DISABLE:-0}
+      POSTGRES_TUNE_EXTRA: ${POSTGRES_TUNE_EXTRA:-}
     volumes:
       - type: bind
         source: ${POSTGRES_DATA_PATH:-./data/postgres}
         target: /var/lib/postgresql
         bind:
           create_host_path: true
-    command: >
-      postgres
-      -c max_connections=100
-      -c shared_buffers=1536MB
-      -c effective_cache_size=4608MB
-      -c maintenance_work_mem=384MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c work_mem=15123kB
-      -c huge_pages=off
-      -c min_wal_size=1GB
-      -c max_wal_size=4GB
-      -c max_worker_processes=4
-      -c max_parallel_workers_per_gather=2
-      -c max_parallel_workers=4
-      -c max_parallel_maintenance_workers=2
-    shm_size: 2gb
+      # Mounted rather than baked into a derived image, so `docker compose pull` and
+      # the image snapshots in scripts/update.sh keep working on postgres itself.
+      - type: bind
+        source: ./db/tune.sh
+        target: /usr/local/bin/opencw-pg-tune.sh
+        read_only: true
+    # The tuner derives the settings and then hands off to the image's own entrypoint,
+    # so initdb, pg_hba.conf and /docker-entrypoint-initdb.d behave exactly as before.
+    entrypoint: ["/bin/sh", "/usr/local/bin/opencw-pg-tune.sh"]
+    command: ["postgres"]
+    # Optional hard ceilings: 0 means "no limit". When set, they are also the tuner's
+    # memory and CPU budget, so declaring them is the reliable way to size the database on
+    # an LXC or nested-container host, where /proc/meminfo reports the physical machine.
+    # Keep shm_size below the memory limit: /dev/shm is charged to the memory limit.
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
+    cpus: ${POSTGRES_CPU_LIMIT:-0}
+    shm_size: ${POSTGRES_SHM_SIZE:-2gb}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_API_BASE: ${PUBLIC_API_BASE}
+    restart: unless-stopped
+    ports:
+      - "3000:80"
 
   backend:
     build:
@@ -72,25 +88,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-quic} run --token ${CLOUDFLARED_TUNNEL_TOKEN}
-    depends_on:
-      - backend
-      - frontend
-      - pgadmin
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        PUBLIC_API_BASE: ${PUBLIC_API_BASE}
-    restart: unless-stopped
-    ports:
-      - "3000:80"
 
   # One-shot renderer: turns the credentials in .env into pgAdmin's server definition and
   # .pgpass, then exits. Runs before pgadmin on every `docker compose up -d`.
@@ -180,6 +177,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-quic} run --token ${CLOUDFLARED_TUNNEL_TOKEN}
+    depends_on:
+      - backend
+      - frontend
+      - pgadmin
 
 volumes:
   pgadmin_data:

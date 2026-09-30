@@ -47,8 +47,10 @@ make check
 ```
 
 Reports **every** problem in `.env` in one pass, then lists warnings for things that work but are
-likely to bite later (empty tunnel token, weak passwords, an unset `POSTGRES_DATA_PATH`). Exits `0`
-when only warnings are found, `1` when something must be fixed.
+likely to bite later (empty tunnel token, weak passwords, an unset `POSTGRES_DATA_PATH`, a
+`POSTGRES_SHM_SIZE` larger than `POSTGRES_MEMORY_LIMIT`). It also checks the shape of the optional
+PostgreSQL tuning values — see [db/README.md](../db/README.md). Exits `0` when only warnings are
+found, `1` when something must be fixed.
 
 ### Update the deployment
 
@@ -127,7 +129,8 @@ All scripts accept `-h`/`--help`. Unless stated otherwise, a failure means exit 
 
 ### `check-env.sh`
 
-Validates root `.env` against the requirements in [DEPLOYMENT.md](../DEPLOYMENT.md).
+Validates root `.env` against the requirements in [DEPLOYMENT.md](../DEPLOYMENT.md), plus the shape
+of the optional `POSTGRES_*` tuning values documented in [db/README.md](../db/README.md).
 
 | Option | Meaning |
 |--------|---------|
@@ -244,6 +247,8 @@ collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwri
 | `unknown argument: --yes` | That script has no prompts | Check `--help`; read-only scripts accept neither `--dry-run` nor `--yes` |
 | `the 'db' service is not created` | Stack is not running | `docker compose up -d`, then retry |
 | `POSTGRES_DATA_PATH is unset` warning | `example.env` value not copied | Set it in `.env`, or accept the in-repo `./data/postgres` default |
+| A `POSTGRES_…` problem or warning from `check-env.sh` | A tuning value is not a size or a whole number, or shared memory is larger than the memory limit | See [db/README.md](../db/README.md) |
+| `db` restart-loops with `opencw-pg-tune: ERROR: cannot find docker-entrypoint.sh` | `db/tune.sh` is missing from the checkout, so its bind mount is empty | Restore the file; confirm the `opencw-pg-tune.sh` mount with `docker compose config` |
 | `pgAdmin: no response` but the UI opens in a browser | `PGADMIN_PORT` changed in `.env` | Already handled — the scripts read it from `.env`. Restart nothing; re-run `make status` |
 | `there are uncommitted changes` | Dirty tree, by design | Commit or stash, or use `git -C . stash` first |
 | `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend`. A container that has restarted twice is reported as crash-looping immediately, and the HTTP probes are skipped, so a bad release fails in seconds rather than waiting out the timeouts |

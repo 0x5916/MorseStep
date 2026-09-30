@@ -26,6 +26,12 @@ Tunnel:
 
 - Docker ≥ 26 with the Compose plugin (`docker compose version`)
 - A reverse proxy (nginx, Caddy, etc.) in front of port 3000 and 8080 for TLS termination
+- No fixed RAM or CPU figure to size against: the `db` service derives its settings from what the
+  container actually has — see [PostgreSQL resource tuning](#postgresql-resource-tuning). On a host
+  that runs anything else, set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in `.env` so
+  PostgreSQL sizes itself against its own share rather than the whole machine. On an LXC or
+  nested-container host this is **required** rather than advisory: `/proc/meminfo` there reports the
+  physical machine.
 
 ## 1. Clone and configure
 
@@ -42,6 +48,12 @@ Edit `.env` and fill in every value:
 POSTGRES_USER=opencw
 POSTGRES_PASSWORD=<strong-random-password>
 POSTGRES_DB=opencw
+
+# Optional. Give PostgreSQL an explicit share of the host. Without these it sizes itself
+# from the container's cgroup limit, or from half of the host's memory when there is none.
+# See "PostgreSQL resource tuning" below.
+# POSTGRES_MEMORY_LIMIT=2g
+# POSTGRES_CPU_LIMIT=2
 
 # ── Backend ───────────────────────────────────────────────────────────────────
 # Must be base64-encoded bytes (≥ 32 raw bytes).
@@ -376,6 +388,105 @@ Notes:
 - `backup.sh` is safe to schedule. Dumps live in `backups/`, which is git-ignored along with the
   `.deploy-state` release record.
 
+## PostgreSQL resource tuning
+
+PostgreSQL is not configured for one fixed server size. `db/tune.sh` runs as the `db` service's
+entrypoint, works out how much memory and how many CPUs the container actually has, derives the
+server settings from that, logs what it chose and why, and then hands off to the image's own
+entrypoint — so `initdb`, `pg_hba.conf` and `/docker-entrypoint-initdb.d` behave exactly as they do
+upstream.
+
+[db/README.md](db/README.md) is the full guide: every variable, worked examples, how to check what
+was chosen, and a troubleshooting table. What follows is the short version.
+
+Read the derived settings from the container log:
+
+```bash
+docker compose logs db | grep opencw-pg-tune
+```
+
+Memory budget, first source that yields a value wins:
+
+| Order | Source |
+|-------|--------|
+| 1 | `POSTGRES_MEMORY_LIMIT`, which also becomes the container's `mem_limit` |
+| 2 | cgroup v2 `memory.max` |
+| 3 | cgroup v1 `memory.limit_in_bytes` |
+| 4 | `POSTGRES_HOST_MEMORY_SHARE` percent (default `50`) of `/proc/meminfo` `MemTotal` |
+
+The CPU budget follows the same idea: `POSTGRES_CPU_LIMIT` (also the container's `cpus`), then
+cgroup v2 `cpu.max`, cgroup v1 `cpu.cfs_quota_us`, `cpuset.cpus`, and finally `nproc`.
+
+Order 4 exists because a container with no memory limit sees the whole machine. On a host that
+runs anything else, set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in `.env` so PostgreSQL
+sizes itself against its own share.
+
+### Declaring the budget on an LXC or nested-container host
+
+`/proc/meminfo` is not namespaced. LXC masks it for the container it manages, but not for the
+Docker containers running inside that container, so `MemTotal` in the `db` container is the
+**physical host's** memory. Measured on this project's test LXC, which is configured with 4 GB:
+
+| Observed from | `MemTotal` |
+|---------------|------------|
+| The LXC itself | 4 GiB |
+| The Docker daemon on that LXC | 4 GiB |
+| Inside the `db` container | 31 GiB |
+
+No cgroup limit is visible either — the container has none of its own — so order 4 is the only
+source left and it is wrong by nearly eight times. That matters because the derived
+`effective_cache_size` and `work_mem` would then describe a machine the database cannot use, and
+`shared_buffers` alone would claim most of the container's real allowance.
+
+So on an LXC or nested-container host, declare the budget. For a 4 GB LXC that also runs the rest
+of this stack, 3 GB leaves the other services headroom:
+
+```dotenv
+POSTGRES_MEMORY_LIMIT=3g
+POSTGRES_CPU_LIMIT=4
+```
+
+That gives `shared_buffers` 768 MB, `work_mem` 10 MB and four parallel workers, and makes Docker
+enforce the ceiling rather than leaving it to chance. When no budget is declared, the tuner caps
+this fallback at 4 GiB and logs a warning saying so, rather than sizing for a machine it cannot
+see.
+
+The settings that follow from the budget (`B` MiB) and the CPU count (`C`):
+
+| Setting | Derived from |
+|---------|--------------|
+| `shared_buffers` | `B / 4`, clamped to 128 MB – 8 GB |
+| `effective_cache_size` | `B * 3 / 4` |
+| `maintenance_work_mem` | `B / 16`, clamped to 64 MB – 2 GB |
+| `work_mem` | `B / (3 * max_connections)`, clamped to 1 MB – 64 MB |
+| `wal_buffers` | `shared_buffers / 32`, clamped to 1 MB – 16 MB |
+| `max_wal_size` / `min_wal_size` | `B / 8`, clamped to 1 GB – 8 GB, and a quarter of that |
+| `max_worker_processes`, `max_parallel_workers` | `C`, clamped to 2 – 16 |
+| `max_parallel_workers_per_gather`, `max_parallel_maintenance_workers` | `C / 2` |
+| `max_connections` | `POSTGRES_MAX_CONNECTIONS`, default `100` |
+
+Settings that describe the disk and the query mix rather than the machine size are deliberately
+left alone: `checkpoint_completion_target`, `default_statistics_target`, `random_page_cost`,
+`effective_io_concurrency` and `huge_pages`. Revisit those if the backing storage changes.
+
+Two things worth knowing:
+
+- `shm_size` cannot be derived, because Compose fixes it when the container is created. It comes
+  from `POSTGRES_SHM_SIZE` (default `2gb`), and the tuner warns at start-up when the derived
+  parallelism could need more than is available. Keep it at or below `POSTGRES_MEMORY_LIMIT`:
+  `/dev/shm` is charged to the container's memory limit, so an oversized value surfaces as an
+  out-of-memory kill under parallel queries rather than as a start-up error. `make check` warns
+  about that combination.
+- These values arrive as `postgres` command-line arguments, so they are not written to
+  `postgresql.conf` and they take precedence over `ALTER SYSTEM`. Changing one of them through
+  pgAdmin will not survive a restart. Use `POSTGRES_TUNE_EXTRA` (for example
+  `POSTGRES_TUNE_EXTRA=-c work_mem=32MB`) or change the budget instead, and
+  `POSTGRES_TUNE_DISABLE=1` to turn the derived values off entirely.
+
+The same script backs the `db` service in `backend/docker-compose.yaml`, so local development runs
+on settings derived from the Docker VM rather than on PostgreSQL's defaults for a much smaller
+machine.
+
 ## Environment variable reference
 
 | Variable          | Required | Description |
@@ -384,6 +495,13 @@ Notes:
 | `POSTGRES_PASSWORD` | yes    | PostgreSQL superuser password |
 | `POSTGRES_DB`     | yes      | Database name |
 | `POSTGRES_DATA_PATH` | no | Host directory bind-mounted at `/var/lib/postgresql`; `example.env` sets `/data/postgres`, Compose fallback is `./data/postgres`. |
+| `POSTGRES_MEMORY_LIMIT` | no | Memory budget for the `db` service, e.g. `2g` or `512mb`. Also the container's `mem_limit`; `0` means no limit. Must stay above `POSTGRES_SHM_SIZE`. |
+| `POSTGRES_CPU_LIMIT` | no | CPU budget for the `db` service, e.g. `2` or `1.5`. Also the container's `cpus`; `0` means no limit. |
+| `POSTGRES_SHM_SIZE` | no | Size of `/dev/shm` for parallel queries, default `2gb`. Compose fixes it when the container is created, so the tuner can only warn about it. |
+| `POSTGRES_MAX_CONNECTIONS` | no | Server-side connection ceiling, default `100`. Keep it above `DB_MAX_OPEN_CONNS` plus the pgAdmin and backup connections; it also divides `work_mem`. |
+| `POSTGRES_HOST_MEMORY_SHARE` | no | Percentage of host memory the database may assume when no container limit is detected, default `50`. |
+| `POSTGRES_TUNE_DISABLE` | no | `1` skips the derived settings and uses the image's own defaults. |
+| `POSTGRES_TUNE_EXTRA` | no | Extra server arguments, appended last so they win, e.g. `-c work_mem=32MB`. |
 | `PGADMIN_DEFAULT_EMAIL` | yes | Login for the pgAdmin web UI. An email address, not a PostgreSQL role. Set once: pgAdmin derives its storage paths from it. |
 | `PGADMIN_DEFAULT_PASSWORD` | yes | Password for the pgAdmin web UI login, read when pgAdmin's configuration database is first created. |
 | `PGADMIN_PORT` | no | Host port for the pgAdmin UI, published on `127.0.0.1` only, default `5050`. |

@@ -51,3 +51,13 @@ Health check endpoint:
 curl http://localhost:8080/v1/health
 ```
 
+The `db` service derives its PostgreSQL settings from the resources the Docker VM has, and logs
+what it chose:
+
+```bash
+docker compose logs db | grep opencw-pg-tune
+```
+
+To give it a different budget, set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in this
+folder's `.env`. The full guide is [db/README.md](../db/README.md).
+

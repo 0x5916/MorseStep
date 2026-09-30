@@ -67,6 +67,28 @@ REQUIRED=(
 
 value_of() { env_get "$1" || true; }
 
+# Bytes for a Compose-style size (2g, 512m, 3000000000), or empty when the value is not a
+# size. Used to compare two sizes, which is how the db service's shared memory is checked
+# against its memory limit below.
+bytes_of() {
+  local value digits unit
+  value="${1,,}"
+  [[ -n ${value} ]] || return 0
+  [[ ${value} =~ ^([0-9]+)([bkmgtp]|([bkmgtp])b)?$ ]] || return 0
+  digits="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}"
+  # Bash wraps silently past 64 bits; refuse anything that long instead of comparing it.
+  (( ${#digits} <= 18 )) || return 0
+  case "${unit}" in
+    ''|b) printf '%s' "$(( 10#${digits} ))" ;;
+    k) printf '%s' "$(( 10#${digits} * 1024 ))" ;;
+    m) printf '%s' "$(( 10#${digits} * 1024 * 1024 ))" ;;
+    g) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 ))" ;;
+    t) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 * 1024 ))" ;;
+    p) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 * 1024 * 1024 ))" ;;
+  esac
+}
+
 for key in "${REQUIRED[@]}"; do
   [[ -n "$(value_of "${key}")" ]] || problems+=("${key} is missing or empty")
 done
@@ -100,6 +122,42 @@ if [[ -n ${pgadmin_email} && ${pgadmin_email} != *"@"* ]]; then
   problems+=("PGADMIN_DEFAULT_EMAIL must be an email address (it is the pgAdmin login, not a PostgreSQL role)")
 fi
 
+# --- PostgreSQL resource tuning (all optional) -------------------------------
+# db/tune.sh and Compose both read these. A typo does not stop the stack: the tuner warns
+# and falls back to auto-detection, so the only visible symptom would be settings that
+# quietly differ from what .env asks for. Check the shape here instead.
+
+for key in POSTGRES_MEMORY_LIMIT POSTGRES_CPU_LIMIT POSTGRES_SHM_SIZE; do
+  value="$(value_of "${key}")"
+  [[ -n ${value} ]] || continue
+  value_lc="${value,,}"
+  if [[ ${key} == POSTGRES_CPU_LIMIT ]]; then
+    [[ ${value_lc} =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+      problems+=("${key} must be a CPU count such as 2 or 1.5 (0 means no limit)")
+  else
+    [[ ${value_lc} =~ ^[0-9]+([bkmgtp]|[bkmgtp]b)?$ ]] ||
+      problems+=("${key} must be a byte size such as 512mb or 2g (0 means no limit)")
+  fi
+done
+
+max_conns="$(value_of POSTGRES_MAX_CONNECTIONS)"
+if [[ -n ${max_conns} && ! ${max_conns} =~ ^[0-9]+$ ]]; then
+  problems+=("POSTGRES_MAX_CONNECTIONS must be a whole number (it is a postgresql.conf setting, not a size)")
+fi
+
+mem_share="$(value_of POSTGRES_HOST_MEMORY_SHARE)"
+if [[ -n ${mem_share} && ! ${mem_share} =~ ^[0-9]+$ ]]; then
+  problems+=("POSTGRES_HOST_MEMORY_SHARE must be a whole percentage between 1 and 100")
+elif [[ -n ${mem_share} ]] && (( 10#${mem_share} < 1 || 10#${mem_share} > 100 )); then
+  problems+=("POSTGRES_HOST_MEMORY_SHARE is ${mem_share}, which is outside 1..100")
+fi
+
+tune_disable="$(value_of POSTGRES_TUNE_DISABLE)"
+case "${tune_disable}" in
+  ''|0|1|true|false) ;;
+  *) problems+=("POSTGRES_TUNE_DISABLE must be 0 or 1") ;;
+esac
+
 # --- warnings ---------------------------------------------------------------
 
 if [[ -z "$(value_of CLOUDFLARED_TUNNEL_TOKEN)" ]]; then
@@ -115,6 +173,28 @@ fi
 pg_password="$(value_of POSTGRES_PASSWORD)"
 if [[ -n ${pg_password} && ${#pg_password} -lt 16 ]]; then
   warnings+=("POSTGRES_PASSWORD is shorter than 16 characters")
+fi
+
+# /dev/shm is charged to the container's memory limit, so a shared-memory demand larger
+# than the limit surfaces as an out-of-memory kill under parallel queries rather than as a
+# start-up error. Verified on Docker 26 and Docker 29: such a container does start.
+shm_bytes="$(bytes_of "$(value_of POSTGRES_SHM_SIZE)")"
+mem_bytes="$(bytes_of "$(value_of POSTGRES_MEMORY_LIMIT)")"
+if [[ -n ${shm_bytes} && -n ${mem_bytes} ]] && (( mem_bytes > 0 && shm_bytes > mem_bytes )); then
+  printf -v msg \
+    'POSTGRES_SHM_SIZE (%s) is larger than POSTGRES_MEMORY_LIMIT (%s). /dev/shm is counted\nagainst the container memory limit, so the database can be killed out of memory under\nparallel queries. Keep POSTGRES_SHM_SIZE at or below the memory limit.' \
+    "$(value_of POSTGRES_SHM_SIZE)" "$(value_of POSTGRES_MEMORY_LIMIT)"
+  warnings+=("${msg}")
+fi
+
+# The server caps total connections; the backend pool is one client of it. A pool larger
+# than the ceiling shows up later as "too many clients already" under load.
+if [[ ${max_conns} =~ ^[0-9]+$ ]]; then
+  pool_conns="$(value_of DB_MAX_OPEN_CONNS)"
+  pool_conns="${pool_conns:-25}"
+  if [[ ${pool_conns} =~ ^[0-9]+$ ]] && (( 10#${max_conns} < 10#${pool_conns} )); then
+    warnings+=("POSTGRES_MAX_CONNECTIONS (${max_conns}) is below DB_MAX_OPEN_CONNS (${pool_conns}); the backend pool alone could exhaust the server's connections")
+  fi
 fi
 
 pgadmin_password="$(value_of PGADMIN_DEFAULT_PASSWORD)"

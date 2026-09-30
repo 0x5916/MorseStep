@@ -11,6 +11,8 @@ OpenCW is a full-stack Morse code training platform with:
 
 - [backend](backend)
 - [frontend](frontend)
+- [db](db) — PostgreSQL tuning guide for the `db` service
+- [scripts](scripts) — operational scripts
 - [api_test](api_test)
 - [docker-compose.yaml](docker-compose.yaml)
 - [example.env](example.env)
@@ -45,6 +47,7 @@ OpenCW is a full-stack Morse code training platform with:
 - Backend API base: http://localhost:8080/v1
 - Health check: http://localhost:8080/v1/health
 - pgAdmin 4 (database admin UI): http://127.0.0.1:5050
+- PostgreSQL: `localhost:${DB_PORT:-5432}`, sized automatically at start-up — see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ## Common Commands
 
@@ -126,4 +129,4 @@ pgAdmin is published on `127.0.0.1` only. Public access goes through the Cloudfl
 
 - The frontend uses PUBLIC_API_BASE at build time. If this value changes, rebuild the frontend image.
 - If browser requests are blocked by CORS, ensure CORS_ORIGINS contains the exact frontend origin you open in the browser.
-- PostgreSQL settings in [docker-compose.yaml](docker-compose.yaml) are tuned for an 8 GB RAM / 4 vCPU Linux server (LXC container profile). Re-tune if your host resources differ.
+- PostgreSQL derives its settings at start-up from the memory and CPU the `db` container actually has, via [db/tune.sh](db/tune.sh), instead of using values fixed for one machine size. Give it an explicit budget with `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in `.env`; what it chose is printed in `docker compose logs db`. Full guide: [db/README.md](db/README.md); summary: the resource tuning section of [DEPLOYMENT.md](DEPLOYMENT.md).

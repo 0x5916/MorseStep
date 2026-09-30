@@ -9,6 +9,15 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
       PGDATA: /var/lib/postgresql/18/docker
+      # The same tuner the root stack uses, so development runs on settings derived from
+      # the Docker VM instead of PostgreSQL's defaults for a machine far smaller than a
+      # laptop. All optional; they are documented in the root example.env.
+      POSTGRES_MEMORY_LIMIT: ${POSTGRES_MEMORY_LIMIT:-0}
+      POSTGRES_CPU_LIMIT: ${POSTGRES_CPU_LIMIT:-0}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-100}
+      POSTGRES_HOST_MEMORY_SHARE: ${POSTGRES_HOST_MEMORY_SHARE:-50}
+      POSTGRES_TUNE_DISABLE: ${POSTGRES_TUNE_DISABLE:-0}
+      POSTGRES_TUNE_EXTRA: ${POSTGRES_TUNE_EXTRA:-}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
@@ -16,6 +25,15 @@ services:
       retries: 10
     volumes:
       - pgdata:/var/lib/postgresql
+      - type: bind
+        source: ../db/tune.sh
+        target: /usr/local/bin/opencw-pg-tune.sh
+        read_only: true
+    entrypoint: ["/bin/sh", "/usr/local/bin/opencw-pg-tune.sh"]
+    command: ["postgres"]
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
+    cpus: ${POSTGRES_CPU_LIMIT:-0}
+    shm_size: ${POSTGRES_SHM_SIZE:-2gb}
 
   app:
     build:
