@@ -37,7 +37,13 @@ func main() {
 
 	server.CORSSetup(r)
 	server.RouterV1Setup(r)
-	server.PprofSetup(r)
+
+	// Profiling endpoints in development only. In production (GIN_MODE=release, which the
+	// image sets) they would be an unauthenticated CPU-burn and heap-dump surface reachable
+	// through the reverse proxy, and nothing in the deployment needs them.
+	if !configs.App.IsRelease() {
+		server.PprofSetup(r)
+	}
 
 	srv := &http.Server{
 		Addr:                ":" + configs.App.Port,

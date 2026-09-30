@@ -34,6 +34,12 @@ services:
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
     cpus: ${POSTGRES_CPU_LIMIT:-0}
     shm_size: ${POSTGRES_SHM_SIZE:-2gb}
+    # Cap the log files, as in the root stack.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   app:
     build:
@@ -48,6 +54,12 @@ services:
         condition: service_healthy
     ports:
       - "${PORT:-8080}:8080"
+    # No healthcheck: the image is distroless, so there is no shell or HTTP client inside it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # One-shot renderer: turns the credentials in .env into pgAdmin's server definition and
   # .pgpass, then exits. Runs before pgadmin on every `docker compose up -d`.
@@ -131,6 +143,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:

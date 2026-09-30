@@ -41,6 +41,13 @@ services:
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
     cpus: ${POSTGRES_CPU_LIMIT:-0}
     shm_size: ${POSTGRES_SHM_SIZE:-2gb}
+    # Cap the log files. Nothing else truncates them and they live in Docker's data root,
+    # so an unattended host would otherwise fill its disk. 10 MB x 3 per container.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -55,8 +62,22 @@ services:
       args:
         PUBLIC_API_BASE: ${PUBLIC_API_BASE}
     restart: unless-stopped
+    # With a Cloudflare Tunnel (or a local reverse proxy) this can be narrowed to
+    # 127.0.0.1:3000:80. Keep the mapping either way: deploy.sh, update.sh and status.sh
+    # probe 127.0.0.1:3000.
     ports:
       - "3000:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   backend:
     build:
@@ -85,6 +106,14 @@ services:
       DB_CONN_MAX_IDLE_TIME: ${DB_CONN_MAX_IDLE_TIME:-5m}
     ports:
       - "8080:8080"
+    # No healthcheck: the image is distroless, so there is no shell or HTTP client inside it
+    # to run one with. `make status` and deploy.sh probe /v1/health from the host instead.
+    # Narrow to 127.0.0.1:8080:8080 with a tunnel or local proxy, but keep the mapping.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       db:
         condition: service_healthy
@@ -177,15 +206,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned on purpose: this is the version already proven on the deployment host, and a
+    # pulled image is not snapshotted by scripts/update.sh, so `latest` would upgrade with no
+    # way back. Bump it deliberately and re-run the tunnel check afterwards.
+    image: cloudflare/cloudflared:2026.9.3
     restart: unless-stopped
     command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-quic} run --token ${CLOUDFLARED_TUNNEL_TOKEN}
     depends_on:
       - backend
       - frontend
       - pgadmin
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgadmin_data:

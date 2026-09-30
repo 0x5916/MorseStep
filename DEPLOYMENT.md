@@ -2,42 +2,164 @@
 
 OpenCW is deployed as a set of Docker containers orchestrated by Docker Compose:
 
-| Service    | Image                       | Port |
-|------------|-----------------------------|------|
-| `db`       | `postgres:18.6-alpine3.23`  | —    |
-| `backend`  | built from `./backend`      | 8080 |
-| `frontend` | built from `./frontend`     | 3000 |
-| `pgadmin`  | `dpage/pgadmin4:9.18.0`     | 5050 (loopback only) |
-| `pgadmin-config` | `dpage/pgadmin4:9.18.0` | — |
+| Service    | Image                       | Published on |
+|------------|-----------------------------|--------------|
+| `db`       | `postgres:18.6-alpine3.23`  | `${DB_PORT:-5432}` — every interface |
+| `backend`  | built from `./backend`      | `8080` — every interface |
+| `frontend` | built from `./frontend`     | `3000` — every interface |
+| `pgadmin`  | `dpage/pgadmin4:9.18.0`     | `127.0.0.1:${PGADMIN_PORT:-5050}` — loopback only |
+| `pgadmin-config` | `dpage/pgadmin4:9.18.0` | not published (one-shot helper) |
+| `cloudflared` | `cloudflare/cloudflared:2026.9.3` | not published (outbound only) |
+
+`db`, `backend` and `frontend` are published on every interface as shipped — setting `DB_PORT` moves
+the port, it does not narrow the binding. [The suggested path](#the-suggested-path) narrows them to
+loopback. Only pgAdmin is bound that way already.
 
 `pgadmin-config` is a one-shot helper that renders pgAdmin's server definition and password file
 from `.env` and then exits; an `exited (0)` entry for it in `docker compose ps` is expected.
 
-Tunnel:
+`cloudflared` has no `profiles:` key in `docker-compose.yaml`, so it always starts with the stack —
+there is no tunnel profile to enable. Without `CLOUDFLARED_TUNNEL_TOKEN` it restart-loops, which
+`make check` warns about and `make status` reports as unhealthy.
 
-| Service       | Image                         | Port |
-|---------------|-------------------------------|------|
-| `cloudflared` | `cloudflare/cloudflared:latest` | —  |
+## Which document owns what
 
-> `cloudflared` has no `profiles:` key in `docker-compose.yaml`, so it starts with the default
-> stack. The `--profile tunnel` flag mentioned in earlier revisions of this document selects nothing.
+- **This file** — the procedure: install, configure, deploy, verify, upgrade, recover.
+- **[scripts/README.md](scripts/README.md)** — the tool reference: every script flag and option, the
+  safety model, exit codes, cron examples and operational troubleshooting.
+- **[example.env](example.env)** — the variable list, with the reasoning for each value.
+- **[db/README.md](db/README.md)** — PostgreSQL tuning: how the database sizes itself and how to
+  override it.
+
+## The suggested path
+
+Public traffic reaches this stack through the **Cloudflare Tunnel**, and nothing is published to the
+network. The tunnel is outbound-only: it needs no inbound port, no certificate on the host and no DNS
+record for you to maintain, and it reaches `frontend`, `backend` and `pgadmin` over the Compose
+network by service name.
+
+| Route | When to use it | What it costs you |
+|-------|----------------|-------------------|
+| **Cloudflare Tunnel** (recommended) | You have a Cloudflare account for the domain | Nothing inbound is opened; pgAdmin's access control comes from Zero Trust (section 5) |
+| Reverse proxy with TLS | Cloudflare is not an option | You own the certificates, their renewal, and the `/debug/` denial — see section 3 |
+| Both | Only if something must be served from the host itself | Two things to keep correct instead of one |
+
+Because the tunnel connects to containers over the Compose network, `db`, `backend` and `frontend` do
+not need to be reachable from the network at all. Narrow their published ports to loopback:
+
+| Service | In `docker-compose.yaml` | Why the mapping stays |
+|---------|--------------------------|-----------------------|
+| `frontend` | `127.0.0.1:3000:80` | `deploy.sh`, `update.sh` and `status.sh` probe `127.0.0.1:3000` |
+| `backend` | `127.0.0.1:8080:8080` | the same scripts probe `127.0.0.1:8080/v1/health` |
+| `db` | `127.0.0.1:${DB_PORT:-5432}:5432` | keeps the database off the network; only containers talk to it |
+
+**Do not delete those mappings.** The probes are how `make deploy` and `make status` decide the stack
+is working, so removing them turns a healthy deployment into a failing check. Loopback keeps them
+working and closes the exposure. `pgadmin` is already bound that way.
+
+### Where things go
+
+| What | Path | Notes |
+|------|------|-------|
+| Checkout | `/opt/opencw` | owned by root, mode 755 |
+| `.env` | `/opt/opencw/.env` | mode 600, git-ignored; the scripts find it from their own location |
+| Database | `/data/postgres`, via `POSTGRES_DATA_PATH` | one host directory, bind-mounted at `/var/lib/postgresql`; on a small LXC this is the root disk, so give it a real mount in production |
+| Backups | `/opt/opencw/backups` | override with `BACKUP_DIR` or `--dir` to keep them off the host (section 6) |
+| Release record | `/opt/opencw/.deploy-state` | written by `update.sh`, git-ignored |
+| pgAdmin state | Docker volume `pgadmin_data` | holds the rendered `.pgpass`, in plain text |
+
+### The install path
+
+The rest of this document expands on each step below. This is the order they run in, and the check
+that says each one worked.
+
+1. **Prepare the host.** Install Docker Engine 26+ with the Compose v2 plugin, `git`, `make`, `curl`
+   and `openssl`, then enable the daemon at boot. On Debian:
+   `apt-get install -y --no-install-recommends docker.io docker-cli docker-compose git curl make ca-certificates openssl`,
+   then `systemctl enable --now docker` (or `service docker start` where there is no systemd).
+   *Gate:* `docker compose version` answers and `bash --version` is 4 or newer.
+2. **Create the layout.** Create the checkout's parent if this is a minimal image
+   (`install -d -m 755 /opt`). If the database gets its own storage, mount it now and confirm with
+   `findmnt /data` — the data directory itself is created on first start by the bind mount.
+   *Gate:* `/opt` is writable, and `findmnt /data` shows the mount if you added one.
+3. **Get the code.** `git clone <repo-url> /opt/opencw`, or copy the tree when there is no remote. The
+   whole checkout is needed, not just the compose file: `db/tune.sh` is bind-mounted from it.
+   *Gate:* `git -C /opt/opencw status` runs and `db/tune.sh` exists.
+4. **Narrow the published ports.** Apply the three loopback bindings above.
+   *Gate:* `docker compose config -q` passes. Skip this only if a host firewall already blocks them.
+5. **Configure `.env`.** `make deploy` bootstraps it from `example.env` and offers to generate
+   `JWT_SECRET`; or copy it and fill it in by hand. The required values are in section 1. On an LXC,
+   also set `POSTGRES_MEMORY_LIMIT=3g` and `POSTGRES_CPU_LIMIT=4`: without a declared budget the tuner
+   has to guess, and it refuses to guess above 4 GiB — see [db/README.md](db/README.md). Then
+   `chmod 600 .env`.
+   *Gate:* `make check` exits 0.
+6. **Deploy.** `make deploy`.
+   *Gate:* it reports success, which means `.env` validated, the images built, and `db`, `backend`,
+   `frontend` and `pgadmin` all answered.
+7. **Verify.** `make status`, then `make backup`.
+   *Gate:* `make status` is green and a dump exists. Also read the database's own report,
+   `docker compose logs db | grep opencw-pg-tune`, and confirm the budget came from
+   `POSTGRES_MEMORY_LIMIT` rather than the fallback warning.
+8. **Expose it.** Set `CLOUDFLARED_TUNNEL_TOKEN`, `docker compose up -d cloudflared`, then create the
+   public hostnames and the Zero Trust policy (sections 2 and 5).
+   *Gate:* every hostname answers, and pgAdmin asks Zero Trust for a decision before it asks you for a
+   password.
+9. **Automate and prove recovery.** Schedule the backup and the health check (section 7), point the
+   backups at storage that is not this host, and rehearse a restore into a scratch database
+   (section 6).
+   *Gate:* a scheduled run produces a dump where you expect it, and the rehearsal loads it.
+
+### What working looks like
+
+`make status` green; the public hostnames answering; the newest dump on storage that is not this
+host; `/debug/pprof/` returning 404 from outside; and none of ports 3000, 8080 or 5432 answering
+from another machine.
+
+### Upgrading an existing install
+
+Add the `POSTGRES_*` values to `.env` first, run `make check`, then `make update`. The `db` container
+is recreated once, which is when the tuner takes effect — a few seconds of database downtime.
 
 ## Requirements
 
-- Docker ≥ 26 with the Compose plugin (`docker compose version`)
-- A reverse proxy (nginx, Caddy, etc.) in front of port 3000 and 8080 for TLS termination
+**Host**
+
+- Linux with Docker Engine 26 or newer and the Compose v2 plugin (`docker compose version`). Debian
+  splits the daemon (`docker.io`) from the CLI (`docker-cli`) and ships Compose as
+  `docker-compose`, which already registers itself as a Compose plugin.
+- `git` to clone and update, `make` to drive the scripts, `openssl` to generate secrets, and
+  `curl` or `wget` for the health probes.
+- The scripts in `scripts/` need bash 4 or newer. macOS ships 3.2 and they refuse to start there, so
+  run them on the deployment host.
+- Disk: room for the images and build cache, for the database under `POSTGRES_DATA_PATH`, and for
+  the retained dumps (14 by default). `make status` reports all three.
+
+**Resources**
+
 - No fixed RAM or CPU figure to size against: the `db` service derives its settings from what the
   container actually has — see [PostgreSQL resource tuning](#postgresql-resource-tuning). On a host
   that runs anything else, set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in `.env` so
   PostgreSQL sizes itself against its own share rather than the whole machine. On an LXC or
   nested-container host this is **required** rather than advisory: `/proc/meminfo` there reports the
   physical machine.
+- Everything else is small — the backend is a static Go binary, the frontend is static files behind
+  nginx, and pgAdmin is the largest of the rest. Budget about 2 GB of RAM on top of the database's.
+
+**Network**
+
+- Public access through the Cloudflare Tunnel (recommended — see [The suggested path](#the-suggested-path)),
+  or a reverse proxy in front of ports 3000 and 8080 if Cloudflare is not an option.
+- Nothing restricts the three application ports as shipped: they publish on every interface. Narrow
+them to loopback as the suggested path describes, or block them in the host firewall.
 
 ## 1. Clone and configure
 
+The stage-by-stage version of this section, with the check between each step, is
+[The suggested path](#the-suggested-path).
+
 ```bash
-git clone <repo-url>
-cd OpenCW
+git clone <repo-url> /opt/opencw
+cd /opt/opencw
 cp example.env .env
 ```
 
@@ -48,6 +170,9 @@ Edit `.env` and fill in every value:
 POSTGRES_USER=opencw
 POSTGRES_PASSWORD=<strong-random-password>
 POSTGRES_DB=opencw
+# Host port for the database. It is published on every interface, so the host firewall is what
+# keeps it private (section 3); changing the port only moves it.
+DB_PORT=5432
 
 # Optional. Give PostgreSQL an explicit share of the host. Without these it sizes itself
 # from the container's cgroup limit, or from half of the host's memory when there is none.
@@ -70,9 +195,10 @@ RESEND_FROM_EMAIL=OpenCW <no-reply@your-domain.example>
 CORS_ORIGINS=https://opencw.example.com
 
 # ── Frontend (build-time) ─────────────────────────────────────────────────────
-# The URL the *browser* uses to reach the backend API.
+# The URL the *browser* uses to reach the backend API, including the API's own path prefix.
+# The backend serves everything under /v1, so the value ends in /v1 — not /api/v1.
 # Must be publicly reachable — this is baked into the frontend bundle at build time.
-PUBLIC_API_BASE=https://api.opencw.example.com/api/v1
+PUBLIC_API_BASE=https://api.opencw.example.com/v1
 
 # ── pgAdmin 4 (admin UI) ──────────────────────────────────────────────────────
 # Login for pgAdmin itself. An email address, NOT a PostgreSQL role, and separate
@@ -110,50 +236,144 @@ make deploy          # or: scripts/deploy.sh
 
 Compose will:
 
-1. Pull `postgres:18.6-alpine3.23` and start the database.
+1. Pull `postgres:18.6-alpine3.23` and start the database. Its `db/tune.sh` entrypoint sizes
+   PostgreSQL from the resources the container actually has and logs what it chose.
 2. Wait for the database healthcheck to pass.
 3. Build and start the backend (Go, distroless image, `GIN_MODE=release`).
-4. Build and start the frontend (SvelteKit Node adapter, `NODE_ENV=production`).
-5. Render the pgAdmin connection settings from `.env` and start the admin UI.
+4. Build and start the frontend: SvelteKit `adapter-static`, pre-rendered at build time into an
+   nginx image. There is no Node process at runtime.
+5. Render the pgAdmin connection settings from `.env`, then start the admin UI.
+6. Start `cloudflared` if a tunnel token is set.
 
-Check everything is healthy:
+### Verify the deployment
+
+`make deploy` waits for the services itself. To re-check a running stack — or to verify one you
+started by hand — use the same tools it does:
 
 ```bash
-docker compose ps
-docker compose logs --tail=50
+make status          # health probes, versions, backups and disk usage
+make check           # .env is valid
+make backup          # proves the database is reachable and dumpable
 ```
 
-## 2b. Start with Cloudflare Tunnel (optional)
+`make status` probes the endpoints the stack exposes: `/v1/health` on the backend, `/` on the
+frontend and `/misc/ping` in pgAdmin, plus `pg_isready` inside `db`. It exits non-zero when any of
+them fails, so a green `make status` is this deployment's definition of working.
 
-Set these values in root `.env`:
+Expected noise: an `exited (0)` entry for `pgadmin-config`, which is a one-shot helper. A service
+that is crash-looping is reported by `make status` as unhealthy rather than as merely up. `db`,
+`pgadmin` and `frontend` have Compose healthchecks; `backend` cannot, because its distroless image
+contains no shell or HTTP client to run one with — a backend that is running but wedged is only
+caught by the `/v1/health` probe above.
+
+### Starting with a Cloudflare Tunnel
+
+Set these in root `.env` before starting, or edit them and restart `cloudflared`:
 
 ```dotenv
 CLOUDFLARED_TUNNEL_TOKEN=<your-tunnel-token>
 CLOUDFLARED_PROTOCOL=quic
 ```
 
-Then start with the tunnel:
+There is nothing else to enable: `cloudflared` has no `profiles:` key, so it starts with the stack
+regardless. An empty token makes it restart-loop; `make check` warns about it and `make status`
+reports it as unhealthy.
 
-```bash
-docker compose up -d --build
+In the Cloudflare dashboard, give the tunnel a public hostname for each service it should reach:
+
+| Public hostname          | Service                | Notes |
+|--------------------------|------------------------|-------|
+| `opencw.example.com`     | `HTTP` → `frontend:80` | the app |
+| `api.opencw.example.com` | `HTTP` → `backend:8080` | the API the browser calls |
+| `pgadmin.opencw.net`     | `HTTP` → `pgadmin:80`  | restrict with Zero Trust — see section 5 |
+
+The hostnames have to match `CORS_ORIGINS` (the frontend origin) and `PUBLIC_API_BASE` (the API
+origin), because both are baked into the frontend bundle at build time.
+
+Nothing has to be opened on the host for any of this: the tunnel reaches the services over the
+Compose network, which is why [The suggested path](#the-suggested-path) narrows the published ports
+to loopback.
+
+If you need to compare transport latency, switch `CLOUDFLARED_PROTOCOL` to `http2` and re-test
+p95/p99.
+
+## 3. Reverse proxy and TLS
+
+This is the alternative to [The suggested path](#the-suggested-path), for hosts without Cloudflare.
+Terminating TLS here means you own the certificates, their renewal, and the `/debug/` denial that a
+tunnel never needs.
+
+Either way, `db`, `backend` and `frontend` should not be reachable from the network: use the loopback
+bindings the suggested path describes, or block those ports in the host firewall instead. With that
+in place, forward:
+
+| Public URL                       | Upstream         |
+|----------------------------------|------------------|
+| `https://opencw.example.com`     | `localhost:3000` |
+| `https://api.opencw.example.com` | `localhost:8080` |
+
+If the proxy runs on another host, the ports have to stay reachable from it: restrict them to its
+address in the firewall rather than binding them to loopback.
+
+Two things the proxy must do beyond terminating TLS:
+
+- **Deny `/debug/`.** The backend registers Go's `net/http/pprof` handlers under `/debug/pprof/*`
+  without authentication (`backend/cmd/api-server/main.go` calls `server.PprofSetup`, defined in
+  `backend/internal/server/router.go`). A plain `location /` rule would publish heap, goroutine and
+  CPU profiles, and `/debug/pprof/profile` can be used to burn CPU on demand. The examples below
+  return 404 for that prefix.
+- **Forward only what is needed.** The API lives under `/v1`, so scoping the API host to that prefix
+  is tighter than forwarding everything. Today nothing else is served, but the margin is free.
+
+> If you serve both under one domain behind a path prefix, `PUBLIC_API_BASE` must include that
+> prefix (for example `https://opencw.example.com/api/v1`) because it is baked into the frontend
+> bundle at build time — changing it means rebuilding the frontend image.
+
+### Example: nginx
+
+```nginx
+# Frontend
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name opencw.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/opencw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/opencw.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# API
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name api.opencw.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.opencw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.opencw.example.com/privkey.pem;
+
+    # Never expose Go's profiling endpoints — see the note above.
+    location /debug/ { deny all; return 404; }
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
 ```
 
-`cloudflared` starts with the default stack (see the note in the service table above). Add the
-`pgadmin.opencw.net` public hostname to the tunnel as described in section 5.
-
-If you need to compare transport latency, switch `CLOUDFLARED_PROTOCOL` to `http2` and re-test p95/p99.
-
-## 3. Reverse proxy
-
-Neither service should be exposed to the public internet directly. Terminate TLS in your reverse proxy and forward:
-
-| Public URL                            | Upstream                 |
-|---------------------------------------|--------------------------|
-| `https://opencw.example.com`          | `localhost:3000`         |
-| `https://api.opencw.example.com`      | `localhost:8080`         |
-
-> If you host both under a single domain (e.g. `/api/v1` path prefix), update
-> `PUBLIC_API_BASE` accordingly and rebuild the frontend image.
+The certificate paths are examples; point them at wherever your certificates live, and reload the
+proxy after a renewal.
 
 ### Example: Caddy
 
@@ -163,35 +383,29 @@ opencw.example.com {
 }
 
 api.opencw.example.com {
+    @pprof path /debug/*
+    respond @pprof 404
     reverse_proxy localhost:8080
 }
 ```
 
-### Example: nginx
+Caddy obtains and renews certificates itself, which is why it is the shorter option.
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name opencw.example.com;
-    location / { proxy_pass http://localhost:3000; }
-}
+## 4. Updates and rollback
 
-server {
-    listen 443 ssl;
-    server_name api.opencw.example.com;
-    location / { proxy_pass http://localhost:8080; }
-}
-```
-
-## 4. Updates
+Use the wrapper:
 
 ```bash
-git pull
-docker compose up -d --build
+make update          # or: scripts/update.sh
 ```
 
-For production use `scripts/update.sh`, which sequences the same steps so that a bad revision
-cannot take the stack down unnoticed:
+> `git pull && docker compose up -d --build` performs the same rebuild, but skips everything that
+> makes an update recoverable: the pre-update database backup, the image snapshots, the dirty-tree
+> check and the verification. Because the migrations are forward-only (below), the backup is the
+> only way back — use the script for anything you care about.
+
+`scripts/update.sh` sequences the steps so that a bad revision cannot take the stack down
+unnoticed:
 
 ```bash
 make update          # or: scripts/update.sh
@@ -214,6 +428,9 @@ performs the image rollback for you:
 scripts/update.sh --ref v1.2.0 --auto-rollback
 ```
 
+The `Makefile` forwards `DRY_RUN`, `YES`, `TIMEOUT`, `REF`, `NO_BACKUP` and `KEEP`, but not
+`--auto-rollback`, so that one has to be called on the script directly.
+
 Preview an update without changing anything:
 
 ```bash
@@ -225,7 +442,15 @@ make update DRY_RUN=1
 > images back therefore does **not** undo schema changes. The pre-update backup from step 3 is the
 > reliable way back — restore it with `scripts/restore.sh --file <dump>`.
 
-Compose will rebuild changed images and recreate only the affected containers. PostgreSQL's data persists in the host directory configured by `POSTGRES_DATA_PATH`; it is not a named Compose volume and is not removed by `docker compose down`.
+So there are two different ways back, and which one you want depends on what broke:
+
+| Situation | What to do |
+|-----------|------------|
+| The new revision misbehaves and the schema is unchanged | Roll the images back: `--auto-rollback`, or re-run the tag commands the script printed |
+| The new revision migrated the schema | Restore the pre-update dump (section 6), then roll the images back to the revision that matches it |
+
+PostgreSQL's data lives in the host directory set by `POSTGRES_DATA_PATH`, not in a named volume,
+so neither an update nor `docker compose down` touches it (section 6).
 
 ## 5. Admin UI (pgAdmin 4)
 
@@ -282,19 +507,22 @@ truth. `docker compose restart pgadmin` does **not** re-run the renderer. If you
 password* in pgAdmin's server dialog, pgAdmin stores its own copy and stops reading `.pgpass` —
 re-enter the password there after rotating `POSTGRES_PASSWORD`.
 
-### Backups through the UI
+### What pgAdmin stores, and what that means
 
-1. In the tree, right-click the `opencw` database → *Backup…*.
-2. Give the file a name (for example `opencw-<date>.dump`), pick the *Custom* format (compressed,
-   restorable with `pg_restore`) or *Plain*, then click *Backup*. Progress and logs appear on the
-   *Processes* tab.
-3. *Tools → Storage Manager* → select the file → *Download*. It lands in your browser's downloads
-   folder.
+- **The database password sits on disk in plain text.** `.pgpass` in the `pgadmin_data` volume holds
+  `POSTGRES_PASSWORD` so the pre-configured server connects without prompting. Anyone who can read
+  that volume, or a copy of it, has a database credential — the same one the backend uses. Treat the
+  volume with the same care as `.env`.
+- **The connection is not pinned to TLS.** `servers.json` sets `sslmode: prefer`, which uses TLS if
+  the server offers it and falls back to plain text otherwise. Inside the Compose network neither
+  applies; it matters only if a pgAdmin server is repointed at a database across a network.
+- **There is no pgAdmin master password** (`PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False`), so
+  stored credentials are not encrypted with one. Access control is Cloudflare Access plus pgAdmin's
+  own login, and nothing else — which is why the Zero Trust policy below should stay narrow.
+- pgAdmin shares the Compose network with the database, so it can reach it freely. Treat it as an
+  administrative surface, not a general-purpose SQL console for production.
 
-The container ships PostgreSQL client tools 13–18 and defaults to the v18 binaries, matching the
-`postgres:18.6` server, so `pg_dump`/`pg_restore` run without version-mismatch errors. Restoring is
-the reverse: upload the dump with the Storage Manager, then right-click the database →
-*Restore…*.
+Creating and downloading dumps through the UI is covered in section 6.
 
 ### Cloudflare Zero Trust
 
@@ -310,53 +538,216 @@ The tunnel container is already part of this stack and reaches pgAdmin over the 
 
 Cloudflare Access is the outer gate and pgAdmin's own login is the inner one — keep both.
 
-## 6. Backups
+## 6. Backups and recovery
 
-The same backups can be created and downloaded through the pgAdmin UI — see section 5.
+The database is the only stateful part of this stack, so backing it up is the whole story: the
+images can be rebuilt, `.env` can be re-created, and the data directory is only useful with its
+matching PostgreSQL version.
 
-`make backup` (or `scripts/backup.sh`) wraps the command-line equivalent below: it writes a
-timestamped dump into `backups/`, verifies it with `gzip -t`, writes a companion
-`pg_dumpall --globals-only` dump into `backups/globals/` for roles and grants, and rotates the
-older dumps down to the newest 14 (`--keep N`, or `$BACKUP_RETENTION`). Globals dumps live in a
-subdirectory so they are never offered as restorable database dumps.
+### Everyday use
 
-Restore with `make restore` (or `scripts/restore.sh`), which takes a pre-restore backup first and
-requires the operator to type the database name before it drops anything.
+```bash
+make backup          # dump now, rotate old dumps
+make restore FILE=backups/opencw_<date>.sql.gz
+```
 
-The command-line equivalent follows.
+`backup.sh` writes a timestamped plain-SQL dump into `backups/`, verifies it with `gzip -t` and a
+non-empty size check, writes a companion `pg_dumpall --globals-only` dump into `backups/globals/`
+for roles and grants, and rotates down to the newest 14 (`--keep N`, or `$BACKUP_RETENTION`).
+`restore.sh` takes a pre-restore backup, requires you to type the database name before it drops
+anything, recreates the database, loads the dump in a single transaction, and reports how many
+tables it found afterwards. Flags, exit codes and the safety model are in
+[scripts/README.md](scripts/README.md).
 
-The root Compose configuration bind-mounts the host directory set by `POSTGRES_DATA_PATH` at `/var/lib/postgresql` in the container. The checked-in `example.env` sets it to `/data/postgres`; Compose falls back to `./data/postgres` if it is unset. PostgreSQL stores its cluster under `/var/lib/postgresql/18/docker`. This is a host path, not a named Docker volume.
+### Keeping copies off the host
 
-Create a portable logical backup with:
+Dumps in `backups/` protect you from a bad migration, not from losing the host. For that, point
+them at storage that is not the machine's own disk — a mounted volume, another server, or object
+storage:
+
+```bash
+scripts/backup.sh --dir /mnt/backups
+```
+
+or set `BACKUP_DIR` in the environment (the scripts, not `.env`) to make it the default. Between
+the nightly schedule and the destination, you are choosing the RPO: a nightly dump means losing up
+to a day, running it every 15 minutes means losing up to 15 minutes. `make status` warns when the
+newest dump is more than 7 days old, which catches a cron job that has quietly stopped.
+
+### Restoring
+
+`restore.sh` is the supported path because it is the one that protects the running database. The
+raw equivalent, if you need to do it by hand, keeps the same guarantees:
 
 ```bash
 set -o pipefail
-docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "opencw_$(date +%F).sql.gz"
+# 1. Take a backup of the current state first — dropping the database is irreversible.
+# 2. Then recreate and load, as one transaction against a fresh database:
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" -O "$POSTGRES_USER" "$POSTGRES_DB"'
+gunzip -c backups/opencw_<date>.sql.gz | docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# 3. Restart the backend so its connection pool reconnects:
+docker compose restart backend
 ```
 
-Restore into a running database:
+By default `restore.sh` drops and recreates the database. `--append` applies the dump on top of the
+existing schema instead — the one mode that writes into data you already have. Restoring a `globals`
+dump (roles and grants) is separate and best-effort: `scripts/restore.sh --globals`.
+
+### Rehearsing a restore
+
+An untested dump is a hope. Rehearse by loading the newest one into a scratch database, which never
+touches the live data:
 
 ```bash
-gunzip -c "opencw_<date>.sql.gz" | docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$POSTGRES_DB"'
+docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" opencw_rehearsal'
+gunzip -c backups/opencw_<date>.sql.gz | docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d opencw_rehearsal'
+echo "select count(*) from pg_tables where schemaname = 'public'" | docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d opencw_rehearsal -At'
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" opencw_rehearsal'
 ```
 
-Before an image upgrade, also take a consistent filesystem snapshot of `POSTGRES_DATA_PATH` while PostgreSQL is stopped, or follow the storage provider's documented procedure for an application-consistent snapshot. Do not use a raw copy of the live PostgreSQL data directory as a backup.
+The table count is the point of the exercise: it should be in the same range as the live database,
+not zero. Do this after any change to the backup schedule or a database version upgrade.
 
-## 7. Stopping / removing
+`restore.sh --append` is not a rehearsal tool: it applies a dump on top of the existing schema of the
+**live** database, for when you want to add rows rather than replace the database.
 
-Stop without removing data:
+### What the data directory is, and is not
+
+The root Compose configuration bind-mounts the host directory set by `POSTGRES_DATA_PATH` at
+`/var/lib/postgresql` in the container. `example.env` sets it to `/data/postgres`; Compose falls
+back to `./data/postgres` if it is unset. PostgreSQL stores its cluster under
+`/var/lib/postgresql/18/docker`. This is a host path, not a named Docker volume, so
+`docker compose down -v` does not touch it.
+
+Before an image upgrade, a consistent filesystem snapshot of that directory, taken while PostgreSQL
+is stopped, is a useful second line of defence — or follow the storage provider's documented
+procedure for an application-consistent snapshot. A raw copy of a live data directory is **not** a
+backup: it can be torn, and it only restores into the same PostgreSQL version.
+
+### Through the pgAdmin UI
+
+1. In the tree, right-click the `opencw` database → *Backup…*.
+2. Give the file a name (for example `opencw-<date>.dump`), pick the *Custom* format (compressed,
+   restorable with `pg_restore`) or *Plain*, then click *Backup*. Progress and logs appear on the
+   *Processes* tab.
+3. *Tools → Storage Manager* → select the file → *Download*. It lands in your browser's downloads
+   folder.
+
+The pgAdmin image ships PostgreSQL client tools 13–18 and defaults to the v18 binaries, matching
+the `postgres:18.6-alpine3.23` server, so `pg_dump`/`pg_restore` run without version-mismatch
+errors. Restoring is the reverse: upload the dump with the Storage Manager, then right-click the
+database → *Restore…*. Keep in mind that a dump taken this way lands in the browser's downloads
+folder, not in `backups/`, so it is outside the retention policy and outside a restore rehearsal.
+
+## 7. Monitoring, logs and reboots
+
+### Health checks
+
+`scripts/status.sh` is the check to schedule. It probes `/v1/health`, the frontend root and
+pgAdmin's `/misc/ping`, runs `pg_isready` inside `db`, validates `.env`, and exits non-zero when
+something is wrong — so anything that understands an exit code can use it directly:
+
+```bash
+make status
+scripts/status.sh --skip-disk      # cheap enough for a five-minute cron (see scripts/README.md)
+```
+
+It also reports the two things that are easy to miss: how old the newest backup is (warning past
+seven days) and how much disk the stack is using.
+
+### Logs
+
+Everything goes to Docker's logging driver:
+
+```bash
+docker compose logs -f backend          # or db, frontend, pgadmin, cloudflared
+docker compose logs --since 1h backend
+```
+
+No rotation is configured, so container logs grow in Docker's data root until something truncates
+them. On a long-running host, cap them — per service in `docker-compose.yaml`, or once for the
+whole daemon in `/etc/docker/daemon.json`, for example a 10 MB maximum with three retained files —
+then `docker compose up -d` to recreate the containers with the new setting.
+
+The database reports the settings it chose at start-up, which is the first thing to read when
+something about performance changed:
+
+```bash
+docker compose logs db | grep opencw-pg-tune
+```
+
+### Reboots
+
+Every long-running service uses `restart: unless-stopped`, so the stack returns by itself after a
+reboot — as long as the Docker daemon starts at boot, which is worth confirming once:
+
+```bash
+systemctl is-enabled docker
+```
+
+`pgadmin-config` is deliberately `restart: "no"`: it is a one-shot renderer that runs on
+`docker compose up -d`. After a reboot pgAdmin starts from the volume it already has, and the files
+are re-rendered the next time you bring the stack up. If you changed `PGADMIN_*` or
+`POSTGRES_PASSWORD` in `.env` and want them applied, run `docker compose up -d` instead of waiting
+for a restart.
+
+After a host has come up, `make status` tells you whether it is actually serving.
+
+## 8. Secrets and rotation
+
+Everything secret lives in root `.env`, in plain text. It is git-ignored; keep it readable only by
+the operator (`chmod 600 .env`). The scripts parse it and never source it, so a value containing
+spaces cannot turn into a command.
+
+| Secret | Used by | Rotating it |
+|--------|---------|-------------|
+| `POSTGRES_PASSWORD` | the backend's connection pool, pgAdmin's `.pgpass`, and any saved pgAdmin server | Rotate the role, `.env` and pgAdmin's saved copy together |
+| `JWT_SECRET` | the backend signs and verifies access tokens with it | Every access and refresh token becomes invalid; users sign in again |
+| `RESEND_API_KEY` | transactional email only | Nothing else; `docker compose up -d backend` |
+| `PGADMIN_DEFAULT_PASSWORD` | the pgAdmin login, only when its configuration database is first created | Editing `.env` afterwards has no effect — reset it in place (section 5) |
+
+To rotate the database password, use psql's own prompt so the value does not land in your shell
+history or the server log:
+
+```bash
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# then, at the psql prompt:  \password opencw
+```
+
+Then update `POSTGRES_PASSWORD` in `.env`, run `docker compose up -d` so `pgadmin-config` re-renders
+`.pgpass` and the backend picks up the new credential, and re-enter the password in pgAdmin if you
+had ticked *Save password*. The old password keeps working until the role is changed, so the order
+above is safe to follow at your own pace.
+
+`JWT_SECRET` is the easy one: a new value plus `docker compose up -d backend`.
+
+## 9. Stopping and removing
+
+Stop the stack without touching data:
 
 ```bash
 docker compose down
 ```
 
-`docker compose down -v` does not delete the bind-mounted database data. To erase it, stop the stack and manually remove the directory configured by `POSTGRES_DATA_PATH` (irreversible).
+`docker compose down -v` removes the `pgadmin_data` volume but **not** the database, because the
+database is a host bind mount rather than a named volume.
 
-The data path can be set in `.env`:
+The data path is set in `.env`:
 
 ```dotenv
 POSTGRES_DATA_PATH=/data/postgres
 ```
+
+Erasing the database is irreversible, so do it deliberately:
+
+1. Stop the stack: `docker compose down`.
+2. Resolve the actual path. `example.env` sets `POSTGRES_DATA_PATH=/data/postgres`, while an unset
+   value makes Compose use `./data/postgres` inside the checkout — those are different directories,
+   and only one of them exists on your host.
+3. Check what you are about to delete: `ls -la <path>`. The directory should contain `PG_VERSION`
+   and a `base/` subdirectory, which is what distinguishes a PostgreSQL cluster from any other
+   directory of the same name.
+4. Remove it, knowing that the only way back is a dump you keep elsewhere (section 6).
 
 ## Operational scripts
 
@@ -373,20 +764,15 @@ the safety model, cron examples and troubleshooting.
 | `scripts/restore.sh` | `make restore` | Restore a dump (recreates the database by default) |
 | `scripts/status.sh` | `make status` | Health, versions, backups and disk usage |
 
-Common flags: `--dry-run` prints the commands instead of running them, `--yes` skips confirmation
-prompts, and every script supports `--help`.
+`--help` works on every script. The scripts that change something also accept `--dry-run` (print the
+commands instead of running them) and `--yes` (skip confirmation prompts); `check-env.sh` and
+`status.sh` are read-only and deliberately reject both. The complete flag list per script is in
+[scripts/README.md](scripts/README.md).
 
-Notes:
-
-- `.env` is **parsed, never sourced**. It contains values with spaces
-  (`RESEND_FROM_EMAIL=OpenCW <no-reply@example.com>`), and sourcing the file would try to execute
-  them.
-- `status.sh` exits non-zero when `.env` is invalid or when `db`, `backend`, `frontend` or
-  `pgadmin` is not running and healthy, so it can be used directly as a cron or monitoring check.
-- `check-env.sh` warns when `CLOUDFLARED_TUNNEL_TOKEN` is empty, because `cloudflared` has no
-  `profiles:` key: it starts with the default stack and will restart-loop without a token.
-- `backup.sh` is safe to schedule. Dumps live in `backups/`, which is git-ignored along with the
-  `.deploy-state` release record.
+Two properties worth remembering: `.env` is parsed and never sourced, and `status.sh` is safe to
+schedule because it only reads — it exits non-zero when the stack is unhealthy, which is what makes
+it usable as a monitoring check. [scripts/README.md](scripts/README.md) documents the safety model
+behind both.
 
 ## PostgreSQL resource tuning
 
@@ -465,9 +851,12 @@ The settings that follow from the budget (`B` MiB) and the CPU count (`C`):
 | `max_parallel_workers_per_gather`, `max_parallel_maintenance_workers` | `C / 2` |
 | `max_connections` | `POSTGRES_MAX_CONNECTIONS`, default `100` |
 
-Settings that describe the disk and the query mix rather than the machine size are deliberately
-left alone: `checkpoint_completion_target`, `default_statistics_target`, `random_page_cost`,
-`effective_io_concurrency` and `huge_pages`. Revisit those if the backing storage changes.
+Five settings describe the disk and the query mix rather than the machine size, so they are fixed
+instead of derived: `checkpoint_completion_target=0.9`, `default_statistics_target=100`,
+`random_page_cost=1.1`, `effective_io_concurrency=200` and `huge_pages=off`. The last two assume
+SSD/NVMe storage and should be higher on spinning disks. Because they are passed on the command
+line like everything else, change them with `POSTGRES_TUNE_EXTRA` — editing them in
+`postgresql.conf` would have no effect.
 
 Two things worth knowing:
 
@@ -494,6 +883,7 @@ machine.
 | `POSTGRES_USER`   | yes      | PostgreSQL superuser name |
 | `POSTGRES_PASSWORD` | yes    | PostgreSQL superuser password |
 | `POSTGRES_DB`     | yes      | Database name |
+| `DB_PORT` | no | Host port for the database, default `5432`, published on every interface |
 | `POSTGRES_DATA_PATH` | no | Host directory bind-mounted at `/var/lib/postgresql`; `example.env` sets `/data/postgres`, Compose fallback is `./data/postgres`. |
 | `POSTGRES_MEMORY_LIMIT` | no | Memory budget for the `db` service, e.g. `2g` or `512mb`. Also the container's `mem_limit`; `0` means no limit. Must stay above `POSTGRES_SHM_SIZE`. |
 | `POSTGRES_CPU_LIMIT` | no | CPU budget for the `db` service, e.g. `2` or `1.5`. Also the container's `cpus`; `0` means no limit. |
@@ -515,9 +905,9 @@ machine.
 | `WRITE_TIMEOUT` | no | Backend response write timeout, default `30s` |
 | `IDLE_TIMEOUT` | no | Backend keep-alive idle timeout, default `120s` |
 | `SHUTDOWN_TIMEOUT` | no | Graceful shutdown timeout, default `20s` |
-| `DB_MAX_OPEN_CONNS` | no | Backend DB max open connections, default `25` |
+| `DB_MAX_OPEN_CONNS` | no | Backend DB max open connections. The backend defaults to `25`; `example.env` ships `30`. |
 | `DB_MAX_IDLE_CONNS` | no | Backend DB max idle connections, default `5` |
 | `DB_CONN_MAX_LIFETIME` | no | Backend DB connection max lifetime, default `30m` |
 | `DB_CONN_MAX_IDLE_TIME` | no | Backend DB connection max idle time, default `5m` |
-| `CLOUDFLARED_TUNNEL_TOKEN` | no | Cloudflare Tunnel token used when running `--profile tunnel` |
+| `CLOUDFLARED_TUNNEL_TOKEN` | no | Cloudflare Tunnel token. `cloudflared` always starts with the stack; an empty token makes it restart-loop, which `make check` warns about |
 | `CLOUDFLARED_PROTOCOL` | no | Connector transport protocol (`quic` or `http2`), default `quic` |
