@@ -8,7 +8,7 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/api-server",
       "cwd": "${workspaceFolder}",
-      "preLaunchTask": "docker: up db",
+      "preLaunchTask": "docker: up",
       "envFile": "${workspaceFolder}/.env",
       "env": {
         "DB_HOST": "127.0.0.1",
