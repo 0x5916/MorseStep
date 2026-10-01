@@ -216,10 +216,7 @@ services:
         max-file: "3"
 
   cloudflared:
-    # Pinned on purpose: this is the version already proven on the deployment host, and a
-    # pulled image is not snapshotted by scripts/update.sh, so `latest` would upgrade with no
-    # way back. Bump it deliberately and re-run the tunnel check afterwards.
-    image: cloudflare/cloudflared:2026.9.3
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-quic} run --token ${CLOUDFLARED_TUNNEL_TOKEN}
     depends_on:
