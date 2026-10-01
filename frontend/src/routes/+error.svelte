@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Home, Radio } from '@lucide/svelte';
+  import { House, Radio } from '@lucide/svelte';
   import { localizedHref as href } from '$lib/i18n.svelte';
   import * as m from '$lib/paraglide/messages';
 
@@ -21,7 +21,7 @@
   </div>
   <div class="error-actions">
     <a href={href('/')} class="btn-primary">
-      <Home size={16} aria-hidden="true" />
+      <House size={16} aria-hidden="true" />
       {m.error_cta_home()}
     </a>
     <a href={href('/morse/learn')} class="btn-ghost">

@@ -10,6 +10,9 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
+    // TypeScript 6 defaults "types" to []; the app + scripts checks need Node
+    // builtins (vite.config.ts imports scripts/paraglide-options.ts -> node:fs).
+    "types": ["node"],
     "moduleResolution": "bundler"
   }
   // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias

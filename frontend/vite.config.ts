@@ -5,9 +5,5 @@ import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { paraglideOptions } from './scripts/paraglide-options.ts';
 
 export default defineConfig({
-  plugins: [
-    tailwindcss(),
-    sveltekit(),
-    paraglideVitePlugin(paraglideOptions)
-  ]
+  plugins: [tailwindcss(), sveltekit(), paraglideVitePlugin(paraglideOptions)]
 });

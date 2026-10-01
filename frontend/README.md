@@ -10,8 +10,10 @@ and served as plain files — there is no server runtime.
 
 ## Requirements
 
-- Node.js 24 (see the `Dockerfile`; `npm` 11+ recommended)
+- Node.js 26 (see the `Dockerfile`; `npm` 11+ recommended)
 - A running OpenCW API (defaults to `http://localhost:8080/v1` via `PUBLIC_API_BASE`)
+- TypeScript is held at 6.x: the TypeScript 7 native compiler has no stable API
+  yet, so svelte-check and typescript-eslint still require TypeScript 6.
 
 ## Setup
 

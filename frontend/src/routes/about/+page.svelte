@@ -2,7 +2,7 @@
   import {
     ArrowRight,
     BookOpen,
-    CheckCircle,
+    CircleCheck,
     ShieldCheck,
     UserRound,
     Wrench
@@ -78,7 +78,7 @@
       </div>
       <div class="compare-col compare-col--good">
         <p class="panel-label compare-head">
-          <CheckCircle size={15} aria-hidden="true" />
+          <CircleCheck size={15} aria-hidden="true" />
           <span>{m.about_koch_vs_koch_label()}</span>
         </p>
         <p class="body-text">{m.about_koch_vs_koch_body()}</p>
