@@ -7,7 +7,7 @@ import (
 	"opencw/internal/configs"
 	"strings"
 
-	"github.com/resend/resend-go/v3"
+	"github.com/resend/resend-go/v4"
 )
 
 func GenerateVerificationCode() (string, error) {

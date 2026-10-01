@@ -81,7 +81,7 @@ func RouterV1Setup(engine *gin.Engine) {
 	forumProtected.DELETE("/replies/:id", forumHandler.DeleteReply)
 
 	protected.GET("/hello", func(c *gin.Context) {
-		user := c.MustGet("user").(models.User)
+		user := c.MustGet("user").(*models.User)
 		c.JSON(http.StatusOK, common.MessageResponse{Message: "Hello, authenticated user {" + user.Username + "}!"})
 	})
 }

@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"opencw/internal/common"
 	"strings"
-	"uuid"
 
+	"opencw/internal/common"
 	"opencw/internal/configs"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 func AuthRequired() gin.HandlerFunc {
