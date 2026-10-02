@@ -33,7 +33,9 @@ npm run dev
 | `npm run preview`           | Preview the production build                                    |
 | `npm run check`             | `svelte-kit sync` + `svelte-check` (TypeScript/Svelte errors)   |
 | `npm run check:scripts`     | `tsc` over `scripts/` (validators are outside the app tsconfig) |
-| `npm run verify`            | All gates in order: messages, SEO, app check, scripts check     |
+| `npm run test`              | Vitest unit tests (domain math, session, audio engine, sync)    |
+| `npm run test:watch`        | Vitest in watch mode                                            |
+| `npm run verify`            | All gates in order: messages, SEO, app check, scripts, tests    |
 | `npm run lint`              | Prettier check + ESLint                                         |
 | `npm run format`            | Prettier write                                                  |
 | `npm run messages:validate` | Message gate: locale parity, missing/extra keys                 |
@@ -58,7 +60,10 @@ src/
     format.ts      Date / lesson / percentage formatting helpers
     i18n.svelte.ts Locale state + locale-aware hrefs
     locale.ts      Locale matching + display labels
-    morse.ts       Koch lessons, Morse table, Farnsworth timing
+    morse.ts       Compatibility facade over the training modules
+    training/      Pure domain modules: Koch sequence, Farnsworth timing,
+                   exercise generation, session state machine, result types
+    audio/         Web Audio engine (plan scheduling + playback lifecycle)
     progressSync.ts Offline-first progress queue
     score.ts       Accuracy scoring, word-level diff, grade thresholds
     seo.ts         Route metadata, sitemap URL builder (used by scripts)
@@ -108,6 +113,10 @@ npm run verify
   locale list.
 - `check` — `svelte-kit sync` + `svelte-check`.
 - `check:scripts` — `tsc` over `scripts/**`, which the app tsconfig does not cover.
+- `test` — Vitest unit tests for the pure training modules (Koch sequence,
+  Farnsworth timing, exercise generation, scoring), the session state machine,
+  the Web Audio engine (with an injected fake context) and offline progress
+  persistence. No Svelte component or browser API is mounted.
 
 ## Docker
 

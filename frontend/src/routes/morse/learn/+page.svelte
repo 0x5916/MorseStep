@@ -1,12 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import {
-    calculateDuration,
-    generateTimedLesson,
-    getLessonChars,
-    LESSONS,
-    MORSE
-  } from '$lib/morse';
+  import { calculateDuration, getLessonChars, LESSONS, MORSE } from '$lib/morse';
+  import { createExercise } from '$lib/training/exercise';
+  import type { Exercise } from '$lib/training/exercise';
+  import { createAttemptResult } from '$lib/training/result';
+  import type { ResultRecorder } from '$lib/training/result';
+  import { canCheck, createSession, transition } from '$lib/training/session';
+  import type { SessionEvent, SessionState, SessionTransition } from '$lib/training/session';
   import { formatClock, percentage } from '$lib/format';
   import MorsePlayer from '$lib/components/MorsePlayer.svelte';
   import ResultOverlay from '$lib/components/ResultOverlay.svelte';
@@ -18,7 +18,7 @@
   import { SCORE_GOOD, SCORE_OK, score, diffWords } from '$lib/score';
   import type { DiffToken } from '$lib/score';
   import { user } from '$lib/auth';
-  import { saveProgressOfflineFirst } from '$lib/progressSync';
+  import { createProgressRecorder } from '$lib/progressSync';
   import {
     normalizeLesson,
     readClientCwSettings,
@@ -53,7 +53,6 @@
   let volume = $state(1);
   let startDelay = $state(0.5);
   let autoSyncTimeout: ReturnType<typeof setTimeout> | null = null;
-  let playing = $state(false);
 
   // Two distinct practices share this page: drilling a single character and
   // copying a timed passage. Only the active mode's controls are rendered, and
@@ -66,8 +65,17 @@
 
   // The passage stays hidden for the whole attempt and is only shown once the
   // copy has been checked — the listening exercise depends on not reading it.
-  let sessionStarted = $state(false);
+  // The assessed attempt lives in one explicit state machine; UI flags are
+  // derived from it instead of keeping parallel booleans.
+  let session = $state<SessionState>(createSession());
+  let exercise = $state<Exercise | null>(null);
+  let lessonText = $derived(exercise?.text ?? '');
+  const recorder: ResultRecorder = createProgressRecorder();
+  let transportLive = $derived(session.status === 'playing' || session.status === 'paused');
+  let sessionStarted = $derived(session.status !== 'ready' && session.status !== 'disposed');
+  let checkEnabled = $derived(canCheck(session) && inputText.trim() !== '');
   let answerEl = $state<HTMLTextAreaElement | null>(null);
+  let reviewButtonEl = $state<HTMLButtonElement | null>(null);
   // Two-step guard: an unfinished copy is never discarded by one stray click.
   let newExerciseArmed = $state(false);
   let newExerciseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -99,6 +107,7 @@
     effWpm = localCw.eff_wpm;
     freq = localCw.freq;
     startDelay = localCw.start_delay;
+    untrack(() => refreshExerciseIfReady());
   });
 
   async function dismissQuickStart() {
@@ -127,6 +136,7 @@
         freq = cw.freq;
         startDelay = cw.start_delay;
         saveClientCwSettings(cw);
+        untrack(() => refreshExerciseIfReady());
       })
       .catch(() => {
         // Keep local defaults if server restore fails.
@@ -181,38 +191,91 @@
     mode = 'drill';
   });
 
-  let lessonText = $derived(generateTimedLesson(chosenLesson, 60, charWpm, effWpm));
   let currentLessonChars = $derived(getLessonChars(chosenLesson).split('').filter(Boolean));
   // Drill target: the newest character the lesson introduces. Lesson 1's
   // sequence ends with M, so that is where the default lands; the lesson effect
   // below keeps it right for every other lesson.
   let selectedLessonChar = $state((LESSONS[0] ?? '').slice(-1));
   let fullLessonPlayer = $state<PlayerHandle | null>(null);
-  function regenerate() {
-    // A fresh passage never plays under the previous one.
-    if (playing) void stopPlayback();
-    lessonText = generateTimedLesson(chosenLesson, 60, charWpm, effWpm);
+  /**
+   * Apply a session transition. Accepted transitions that carry a record
+   * effect persist the attempt exactly once; rejected events change nothing.
+   */
+  function applyTransition(outcome: SessionTransition): boolean {
+    if (!outcome.ok) return false;
+    session = outcome.state;
+    for (const effect of outcome.effects) {
+      if (effect.kind === 'record-result') {
+        void recorder.record(effect.result).catch(() => {});
+      }
+    }
+    return true;
+  }
+
+  function send(event: SessionEvent) {
+    applyTransition(transition(session, event));
+  }
+
+  function clearNewExerciseArm() {
+    newExerciseArmed = false;
+    if (newExerciseTimer) {
+      clearTimeout(newExerciseTimer);
+      newExerciseTimer = null;
+    }
+  }
+
+  /** Generate a passage for the current lesson and settings. */
+  function generateExercise(): Exercise {
+    return createExercise({ lesson: chosenLesson, charWpm, effWpm, targetSeconds: 60 });
+  }
+
+  /**
+   * Speed/lesson settings changed while no attempt is under way: start a fresh
+   * passage at the new speed. Once an attempt has begun the exercise is held
+   * stable until it is completed or replaced.
+   */
+  function refreshExerciseIfReady() {
+    if (session.status !== 'ready') return;
+    exercise = generateExercise();
+  }
+
+  /** Replace the exercise and open a new, unrecorded attempt. */
+  function startNewExercise() {
+    exercise = generateExercise();
+    send({ type: 'new-exercise' });
     resetResultState({ clearInput: true });
   }
 
+  function regenerate() {
+    // A fresh passage never plays under the previous one.
+    void stopPlayback();
+    startNewExercise();
+  }
+
   async function checkResult() {
-    result = score(lessonText, inputText);
-    diffTokens = diffWords(lessonText, inputText);
+    if (!exercise || !checkEnabled) return; // repeated checks cannot record twice
+
+    const accuracy = score(exercise.text, inputText);
+    const attempt = createAttemptResult({
+      lesson: exercise.lesson,
+      charWpm,
+      effWpm,
+      accuracy
+    });
+
+    const outcome = transition(session, { type: 'check', result: attempt });
+    if (!applyTransition(outcome)) return;
+
+    result = accuracy;
+    diffTokens = diffWords(exercise.text, inputText);
     showOverlay = true;
-    // Checking ends the attempt: stop the audio so the transport matches the
-    // "Checked" state instead of running on behind the result.
-    if (playing) void stopPlayback();
     // A pending discard stops being pending once the copy has been checked.
-    newExerciseArmed = false;
-    if (newExerciseTimer) clearTimeout(newExerciseTimer);
-    if (result > 0) {
-      saveProgressOfflineFirst({
-        lesson: chosenLesson,
-        char_wpm: charWpm,
-        eff_wpm: effWpm,
-        accuracy: result
-      }).catch(() => {});
-    }
+    clearNewExerciseArm();
+
+    // Checking ends the attempt: stop the audio so the transport matches the
+    // "Checked" state instead of running on behind the result. The late stop
+    // event is rejected by the machine because the attempt is already recorded.
+    await stopPlayback();
   }
 
   let hasNextLesson = $derived(result >= SCORE_GOOD && chosenLesson < LESSONS.length);
@@ -256,7 +319,15 @@
     { index: 4, label: m.trainer_flow_review }
   ]);
   let flowIndex = $derived(
-    !sessionStarted ? 0 : playing ? 1 : result >= 0 ? 4 : inputText.trim() === '' ? 2 : 3
+    session.status === 'ready'
+      ? 0
+      : transportLive
+        ? 1
+        : session.status === 'reviewed'
+          ? 4
+          : inputText.trim() === ''
+            ? 2
+            : 3
   );
 
   // The send time the player will actually run for: the generator's 60 s target
@@ -266,11 +337,11 @@
 
   // One line per state, naming what to do next.
   let sessionStateText = $derived(
-    result >= 0
+    session.status === 'reviewed'
       ? m.trainer_state_checked()
-      : playing
+      : transportLive
         ? m.trainer_state_listening()
-        : !sessionStarted
+        : session.status === 'ready'
           ? m.trainer_state_ready()
           : inputText.trim() !== ''
             ? m.trainer_state_ready_check()
@@ -288,7 +359,7 @@
   function requestNewExercise() {
     // Unfinished work — a typed copy, or a session already under way — asks
     // first. A fresh, untouched exercise is replaced straight away.
-    const unfinished = result < 0 && (inputText.trim() !== '' || sessionStarted);
+    const unfinished = result < 0 && (inputText.trim() !== '' || session.status !== 'ready');
     if (newExerciseTimer) clearTimeout(newExerciseTimer);
 
     if (!newExerciseArmed && !unfinished) {
@@ -297,7 +368,7 @@
     }
 
     if (newExerciseArmed) {
-      newExerciseArmed = false;
+      clearNewExerciseArm();
       regenerate();
       return;
     }
@@ -307,16 +378,23 @@
   }
   // Only the action that is next uses the amber fill: while the audio runs the
   // transport owns it, then the check does — until the copy has been checked.
-  let isCheckPrimary = $derived(inputText.trim() !== '' && !playing && result < 0);
+  let isCheckPrimary = $derived(checkEnabled && !transportLive);
 
   function prevLesson() {
     chosenLesson -= 1;
-    resetResultState({ clearInput: true });
-    scheduleApiSync();
+    onLessonChanged();
   }
 
   function nextLesson() {
     chosenLesson += 1;
+    onLessonChanged();
+  }
+
+  /** A lesson change replaces the exercise and abandons the current attempt. */
+  function onLessonChanged() {
+    void stopPlayback();
+    exercise = generateExercise();
+    send({ type: 'lesson-change' });
     resetResultState({ clearInput: true });
     scheduleApiSync();
   }
@@ -329,17 +407,20 @@
     result = -1;
     diffTokens = [];
     showOverlay = false;
-    // A new exercise starts hidden again: no transcript, locked answer box.
-    sessionStarted = false;
+    clearNewExerciseArm();
   }
 
-  function onLessonSelectChange() {
-    result = -1;
-    scheduleApiSync();
+  function onLessonSelectChange(event: Event) {
+    const value = Number.parseInt((event.currentTarget as HTMLSelectElement).value, 10);
+    if (Number.isFinite(value)) chosenLesson = value;
+    onLessonChanged();
   }
 
   function onCwSettingInput() {
     saveClientCwSettings({ char_wpm: charWpm, eff_wpm: effWpm, freq, start_delay: startDelay });
+    // Before an attempt starts, a speed change starts a fresh passage; during
+    // or after one, the current exercise stays stable.
+    refreshExerciseIfReady();
     scheduleApiSync();
   }
 
@@ -406,14 +487,31 @@
     inputText = value.toUpperCase();
   }
 
+  /**
+   * Dismiss the result overlay. It restores focus to whatever opened it, but
+   * that trigger (Check) is disabled once an attempt has been reviewed, so
+   * focus falls back to the Review action instead of the document.
+   */
+  async function closeOverlay() {
+    showOverlay = false;
+    await tick();
+    if (!document.activeElement || document.activeElement === document.body) {
+      reviewButtonEl?.focus();
+    }
+  }
+
   /** Playback started, whichever control started it (button, Space, replay). */
   function onSessionStart() {
-    sessionStarted = true;
-    playing = true;
+    send({ type: 'start' });
     // Start → listen → type: the cursor belongs in the answer box whichever
     // control started the audio. The box stays disabled until the session has
     // started, so focus once that state has reached the DOM.
     void tick().then(() => answerEl?.focus());
+  }
+
+  /** Playback ended — naturally, via the Stop control or via Escape. */
+  function onSessionEnded() {
+    send({ type: 'stop' });
   }
 
   async function playSession() {
@@ -423,7 +521,6 @@
 
   async function stopPlayback() {
     await fullLessonPlayer?.stopNow();
-    playing = false;
   }
 
   // ---- Character drill ------------------------------------------------------
@@ -452,9 +549,23 @@
     drillPlayed = false;
   }
 
+  /**
+   * Switch practice mode. Audio from the mode being left is stopped first so
+   * the two modes can never play over each other; the typed copy is kept.
+   */
+  async function setMode(next: 'passage' | 'drill') {
+    if (next === mode) return;
+    if (next === 'drill') {
+      if (transportLive) await stopPlayback();
+    } else if (drillPlaying) {
+      await stopDrill();
+    }
+    mode = next;
+  }
+
   /** The drill is an introduction: it hands over to the real copying exercise. */
   async function goToPassage() {
-    mode = 'passage';
+    await setMode('passage');
     // Focus follows the switch, so keyboard users land on the new mode.
     await tick();
     modePassageEl?.focus();
@@ -467,13 +578,13 @@
     // is the page-level one that runs while focus is outside a control.
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (inputText.trim() !== '') checkResult();
+      if (checkEnabled) void checkResult();
       return;
     }
 
     // Escape stops the transmission from inside the field as well, so a copy can
     // be cut short without leaving the box or reaching for the mouse.
-    if (event.key === 'Escape' && playing) {
+    if (event.key === 'Escape' && transportLive) {
       event.preventDefault();
       void stopPlayback();
     }
@@ -501,7 +612,7 @@
       } else if (event.key === 'Escape') {
         if (mode === 'drill') {
           if (drillPlaying) void stopDrill();
-        } else if (playing) {
+        } else if (transportLive) {
           void stopPlayback();
         }
       }
@@ -675,7 +786,13 @@
       <fieldset class="segmented">
         <legend class="sr-only">{m.trainer_mode_legend()}</legend>
         <label class="mode-option">
-          <input type="radio" name="practice-mode" value="drill" bind:group={mode} />
+          <input
+            type="radio"
+            name="practice-mode"
+            value="drill"
+            checked={mode === 'drill'}
+            onchange={() => void setMode('drill')}
+          />
           <span class="segmented-item">{m.trainer_mode_drill()}</span>
         </label>
         <label class="mode-option">
@@ -684,7 +801,8 @@
             name="practice-mode"
             value="passage"
             bind:this={modePassageEl}
-            bind:group={mode}
+            checked={mode === 'passage'}
+            onchange={() => void setMode('passage')}
           />
           <span class="segmented-item">{m.trainer_mode_passage()}</span>
         </label>
@@ -714,11 +832,11 @@
           {volume}
           {startDelay}
           showSettings
-          playTone={sessionStarted && !playing ? 'quiet' : 'primary'}
-          showTransportExtras={playing}
+          playTone={sessionStarted && !transportLive ? 'quiet' : 'primary'}
+          showTransportExtras={transportLive}
           onStart={onSessionStart}
           onSettingsInput={onCwSettingInput}
-          onEnded={() => (playing = false)}
+          onEnded={onSessionEnded}
           playLabel={sessionStarted ? m.trainer_replay() : m.player_play()}
           label={m.player_label()}
         />
@@ -760,6 +878,7 @@
               <button
                 type="button"
                 class="quiet-btn quiet-btn--accent"
+                bind:this={reviewButtonEl}
                 onclick={() => (showOverlay = true)}>{m.trainer_result_review()}</button
               >
             </p>
@@ -768,7 +887,7 @@
           <p class="key-hints">
             {#if !sessionStarted}
               <span class="key-hint"><kbd>Space</kbd> {m.trainer_hint_start()}</span>
-            {:else if !playing}
+            {:else if !transportLive}
               <span class="key-hint"><kbd>Space</kbd> {m.trainer_hint_play()}</span>
             {/if}
             <span class="key-hint"><kbd>Enter</kbd> {m.trainer_hint_check()}</span>
@@ -779,7 +898,7 @@
             <button
               class={isCheckPrimary ? 'btn-primary console-check' : 'btn-ghost console-check'}
               onclick={checkResult}
-              disabled={inputText.trim() === ''}>{m.trainer_check()}</button
+              disabled={!checkEnabled}>{m.trainer_check()}</button
             >
             <button
               class="btn-ghost console-new"
@@ -862,7 +981,7 @@
     {hasPrevLesson}
     nextLessonNum={chosenLesson + 1}
     prevLessonNum={chosenLesson - 1}
-    onClose={() => (showOverlay = false)}
+    onClose={closeOverlay}
     onNext={nextLesson}
     onPrev={prevLesson}
     onRegenerate={regenerate}

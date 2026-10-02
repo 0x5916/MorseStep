@@ -1,11 +1,40 @@
 <script lang="ts">
-  import { calculateDuration, getFarnsworthWpmSet, MORSE } from '$lib/morse';
+  import { calculateDuration, buildAudioPlan } from '$lib/training/timing';
+  import type { AudioPlan } from '$lib/training/timing';
+  import { createWebAudioEngine } from '$lib/audio/engine';
+  import type { AudioEngine } from '$lib/audio/engine';
   import { formatClock } from '$lib/format';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { Play, Square, Pause, SlidersHorizontal, SkipForward } from '@lucide/svelte';
   import { user } from '$lib/auth';
   import GuestNotice from '$lib/components/GuestNotice.svelte';
   import * as m from '$lib/paraglide/messages';
+
+  interface Props {
+    text?: string;
+    charWpm?: number;
+    effWpm?: number;
+    freq?: number;
+    startDelay?: number;
+    volume?: number;
+    playLabel?: string;
+    label?: string;
+    showSettings?: boolean;
+    /* 'primary' keeps the play control amber; 'quiet' dresses it as a secondary
+       action once the passage has already been played through once. */
+    playTone?: 'primary' | 'quiet';
+    /* Stop, skip and the clock stay hidden until playback has started, so the
+       ready state shows one obvious action instead of dead controls. */
+    showTransportExtras?: boolean;
+    onSettingsInput?: () => void;
+    /* Fired whenever playback starts, whichever control started it. The page
+       uses it to unlock the answer box or mask the drill character. */
+    onStart?: () => void;
+    onEnded?: () => void;
+    /* Test seam: replace the browser engine (e.g. with a fake) without
+       touching the transport UI. */
+    createEngine?: () => AudioEngine;
+  }
 
   let {
     text = '',
@@ -17,29 +46,28 @@
     playLabel = '',
     label = '',
     showSettings = false,
-    /* 'primary' keeps the play control amber; 'quiet' dresses it as a secondary
-       action once the passage has already been played through once. */
     playTone = 'primary',
-    /* Stop, skip and the clock stay hidden until playback has started, so the
-       ready state shows one obvious action instead of dead controls. */
     showTransportExtras = true,
     onSettingsInput = () => {},
-    /* Fired whenever playback starts, whichever control started it. The page
-       uses it to unlock the answer box or mask the drill character. */
     onStart = () => {},
-    onEnded = () => {}
-  } = $props();
+    onEnded = () => {},
+    createEngine = (): AudioEngine => createWebAudioEngine()
+  }: Props = $props();
 
   let effectivePlayLabel = $derived(playLabel || m.player_play());
 
-  let ctx = $state<AudioContext | null>(null);
+  /* Playback is delegated to an audio engine; this component keeps only the
+     transport/UI view of it. `activePlan` is the exact schedule the engine is
+     playing, so the clock and the playhead always match the audio. The engine
+     is created once for the component's lifetime. */
+  const engine = untrack(() => createEngine());
   let started = $state(false);
   let paused = $state(false);
   let progress = $state(0);
   let timer = $state(0);
   let rafId = 0;
-  let ctxStartTime = 0;
   let activeText = $state('');
+  let activePlan = $state<AudioPlan | null>(null);
   let settingsOpen = $state(false);
   let settingsEl = $state<HTMLDetailsElement | null>(null);
   let settingsPanelEl = $state<HTMLDivElement | null>(null);
@@ -274,9 +302,13 @@
     };
   });
 
-  let duration = $derived(calculateDuration(activeText, charWpm, effWpm) + startDelay);
-  let timings = $derived(getFarnsworthWpmSet(charWpm, effWpm));
-  let fade = $derived(Math.min(timings.charDot * 0.1, 0.005));
+  /* The transport clock quotes the active playback exactly; while idle it
+     previews the text at the current settings. */
+  let duration = $derived(
+    started && activePlan
+      ? activePlan.totalDuration + activePlan.startDelay
+      : calculateDuration(activeText, charWpm, effWpm) + startDelay
+  );
   let elapsedTime = $derived(Math.max(timer, 0));
   let totalTime = $derived(Math.max(duration - startDelay, 0));
 
@@ -284,90 +316,80 @@
     if (!started) activeText = text;
   });
 
-  function play() {
-    if (ctx !== null) throw new Error('Audio is already playing');
-    started = true;
+  /** Reset the local transport view; the engine has already released its audio. */
+  function resetTransport() {
+    cancelAnimationFrame(rafId);
+    started = false;
     paused = false;
-    onStart();
+    progress = 0;
+    timer = 0;
+    activePlan = null;
+  }
 
-    ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    ctxStartTime = ctx.currentTime;
-    let t = ctx.currentTime + startDelay;
-
-    for (const char of activeText.toUpperCase()) {
-      const morse = MORSE[char];
-      if (!morse) {
-        t += timings.wordSpace;
-        continue;
-      }
-
-      for (let j = 0; j < morse.length; j++) {
-        const dur = morse[j] === '.' ? timings.charDot : timings.dash;
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(volume, t + fade);
-        gain.gain.setValueAtTime(volume, t + dur - fade);
-        gain.gain.linearRampToValueAtTime(0, t + dur);
-        t += dur;
-        if (j < morse.length - 1) t += timings.symbolSpace;
-      }
-      t += timings.letterSpace;
-    }
-    // remove last letter space
-    t -= activeText.length > 0 ? timings.letterSpace : 0;
-
-    osc.onended = () => stop();
-    osc.start();
-    osc.stop(t);
-
-    function tick() {
-      if (!ctx) return;
-      const elapsed = ctx.currentTime - ctxStartTime;
-      progress = Math.min(elapsed / duration, 1);
-      timer = elapsed - startDelay;
-      rafId = requestAnimationFrame(tick);
+  function tick() {
+    if (!started) return;
+    const plan = activePlan;
+    const elapsed = engine.elapsed();
+    if (plan && elapsed > 0) {
+      timer = elapsed - plan.startDelay;
+      const total = plan.totalDuration + plan.startDelay;
+      progress = total > 0 ? Math.min(elapsed / total, 1) : 1;
     }
     rafId = requestAnimationFrame(tick);
   }
 
-  async function pause() {
-    if (!ctx) return;
-    await ctx.suspend();
-    paused = true;
-  }
-
-  async function resume() {
-    if (!ctx) return;
-    await ctx.resume();
+  function startPlayback(sourceText: string) {
+    const plan = buildAudioPlan(sourceText, {
+      charWpm,
+      effWpm,
+      frequency: freq,
+      volume,
+      startDelay
+    });
+    activeText = sourceText;
+    activePlan = plan;
+    started = true;
     paused = false;
-  }
-
-  async function stop(emitEnded = true) {
-    cancelAnimationFrame(rafId);
-    progress = 0;
     timer = 0;
-    await ctx?.close();
-    ctx = null;
-    started = false;
-    paused = false;
-    if (emitEnded) onEnded();
+    progress = 0;
+    engine.play(plan);
+    onStart();
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(tick);
   }
+
+  /* The engine owns the playback lifecycle; this subscription only mirrors it
+     into component state and tells the page when playback is over. */
+  const unsubscribeEnded = engine.subscribe((event) => {
+    if (event !== 'ended') return;
+    resetTransport();
+    onEnded();
+  });
 
   async function togglePlayPause() {
     if (!started) {
-      activeText = text;
-      play();
+      startPlayback(activeText);
       return;
     }
     if (paused) {
-      await resume();
+      await engine.resume();
+      paused = false;
     } else {
-      await pause();
+      await engine.pause();
+      paused = true;
+    }
+  }
+
+  /**
+   * Stop playback. A notified stop lets the engine's ended event drive the
+   * reset; a silent one (used when immediately replaying) resets locally.
+   */
+  async function stop(emitEnded = true) {
+    const wasActive = engine.isActive();
+    await engine.stop({ notify: emitEnded && wasActive });
+    if (!emitEnded || !wasActive) {
+      resetTransport();
+      if (emitEnded) onEnded();
     }
   }
 
@@ -377,28 +399,30 @@
     const source = activeText.toUpperCase();
     if (!source) return;
 
-    const ratio = totalTime > 0 ? elapsedTime / totalTime : 1;
+    const total = activePlan?.totalDuration ?? 0;
+    const ratio = total > 0 ? elapsedTime / total : 1;
     const nextIndex = Math.min(source.length, Math.floor(ratio * source.length) + 1);
     const remaining = source.slice(nextIndex);
 
-    await stop(false);
     if (!remaining) {
+      // Nothing left to skip to: end the playback properly so the page's
+      // transport state does not keep thinking a transmission is running.
+      await stop(true);
       activeText = text;
       return;
     }
 
-    activeText = remaining;
-    play();
+    await stop(false);
+    startPlayback(remaining);
   }
 
   export async function playNow() {
     if (!text) return;
-    if (ctx) await stop();
-    play();
+    startPlayback(text);
   }
 
   export async function stopNow() {
-    await stop();
+    await stop(true);
   }
 
   export function isStarted() {
@@ -408,7 +432,8 @@
   onDestroy(() => {
     // `onDestroy` also runs during SSR teardown, where there is no rAF API.
     if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
-    return ctx?.close();
+    unsubscribeEnded();
+    void engine.dispose();
   });
 </script>
 

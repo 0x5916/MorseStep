@@ -1,5 +1,6 @@
 import { submitProgress } from '$lib/api';
 import type { ProgressRecord } from '$lib/api';
+import type { AttemptResult, ResultRecorder } from '$lib/training/result';
 import { AUTH_STORAGE_KEYS, CW_STORAGE_KEYS } from '$lib/storageKeys';
 
 type ProgressPayload = {
@@ -175,10 +176,15 @@ export async function saveProgressOfflineFirst(args: {
   char_wpm: number;
   eff_wpm: number;
   accuracy: number;
+  /** Optional completion time for the record; defaults to now. */
+  clientCreatedAt?: string;
 }): Promise<void> {
   const payload: ProgressPayload = {
-    ...args,
-    client_created_at: new Date().toISOString(),
+    lesson: args.lesson,
+    char_wpm: args.char_wpm,
+    eff_wpm: args.eff_wpm,
+    accuracy: args.accuracy,
+    client_created_at: args.clientCreatedAt ?? new Date().toISOString(),
     username: localStorage.getItem(AUTH_STORAGE_KEYS.username) ?? undefined,
     queued_at: new Date().toISOString()
   };
@@ -217,4 +223,24 @@ export function initializeProgressSync(): void {
   });
 
   void flushQueuedProgress();
+}
+
+/**
+ * Adapt the offline-first progress queue to the trainer's `ResultRecorder`
+ * port. Payloads, storage keys and guest/account behaviour are exactly those
+ * of `saveProgressOfflineFirst`; recording an attempt at most once is the
+ * session's responsibility.
+ */
+export function createProgressRecorder(): ResultRecorder {
+  return {
+    async record(result: AttemptResult): Promise<void> {
+      await saveProgressOfflineFirst({
+        lesson: result.lesson,
+        char_wpm: result.charWpm,
+        eff_wpm: result.effWpm,
+        accuracy: result.accuracy,
+        clientCreatedAt: result.completedAt
+      });
+    }
+  };
 }
