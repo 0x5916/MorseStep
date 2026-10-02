@@ -2,13 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "docker: up",
+      "label": "docker: up db pgadmin pgadmin-config",
       "type": "shell",
       "command": "docker",
       "args": [
         "compose",
         "up",
         "-d",
+        "db",
+        "pgadmin",
+        "pgadmin-config"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -16,12 +19,15 @@
       "problemMatcher": []
     },
     {
-      "label": "docker: down",
+      "label": "docker: stop db pgadmin pgadmin-config",
       "type": "shell",
       "command": "docker",
       "args": [
         "compose",
         "down",
+        "db",
+        "pgadmin",
+        "pgadmin-config"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

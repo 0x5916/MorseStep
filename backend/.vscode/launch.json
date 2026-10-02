@@ -8,7 +8,8 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/api-server",
       "cwd": "${workspaceFolder}",
-      "preLaunchTask": "docker: up",
+      "preLaunchTask": "docker: up db pgadmin pgadmin-config",
+      "postDebugTask": "docker: stop db pgadmin pgadmin-config",
       "envFile": "${workspaceFolder}/.env",
       "env": {
         "DB_HOST": "127.0.0.1",
