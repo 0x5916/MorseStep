@@ -1,7 +1,9 @@
 {
   "nav_home": "首页",
-  "nav_train": "练习",
+  "nav_learn": "学习",
+  "nav_practice": "练习",
   "nav_progress": "进度",
+  "nav_profile": "个人资料",
   "nav_forum": "论坛",
   "nav_about": "关于",
   "nav_settings": "账户设置",

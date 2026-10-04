@@ -547,7 +547,7 @@
       {#if recentRecords.length === 0}
         <p class="body-text profile-empty">
           {m.profile_history_empty()}
-          <a href={localizedHref('/morse/learn')} class="link">{m.nav_train()}</a>
+          <a href={localizedHref('/morse/learn')} class="link">{m.nav_learn()}</a>
         </p>
       {:else}
         <div class="profile-table-wrap">

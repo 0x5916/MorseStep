@@ -49,6 +49,15 @@
   --status-bad-tint: color-mix(in srgb, var(--status-bad) 15%, transparent);
   --status-extra-tint: color-mix(in srgb, var(--status-extra) 15%, transparent);
 
+  /* MorseStep learning-specific semantic aliases */
+  --learning-current: var(--accent);
+  --learning-stable: var(--status-good);
+  --learning-review: var(--status-ok);
+  --learning-error: var(--status-bad);
+  --learning-info: var(--status-extra);
+  --session-max-width: 42rem;
+  --answer-target-min: 3rem;
+
   /* Mostly rectangular surfaces: 2px chips, 3px controls, 5px panels, 6px the
      largest sheets. Pills are reserved for dots. */
   --radius-xs: 2px;

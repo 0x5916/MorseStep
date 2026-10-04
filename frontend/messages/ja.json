@@ -1,7 +1,9 @@
 {
   "nav_home": "ホーム",
-  "nav_train": "練習",
+  "nav_learn": "学習",
+  "nav_practice": "練習",
   "nav_progress": "進捗",
+  "nav_profile": "プロフィール",
   "nav_forum": "フォーラム",
   "nav_about": "概要",
   "nav_settings": "アカウント設定",

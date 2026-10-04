@@ -17,8 +17,14 @@
   <ul class="row-list">
     <li>
       <a class="row-link tool-row" href={href('/morse/learn')}>
-        <strong class="tool-title">{m.nav_train()}</strong>
+        <strong class="tool-title">{m.nav_learn()}</strong>
         <span class="tool-note">{m.home_preview_caption()}</span>
+      </a>
+    </li>
+    <li>
+      <a class="row-link tool-row" href={href('/morse/practice')}>
+        <strong class="tool-title">{m.nav_practice()}</strong>
+        <span class="tool-note">{m.trainer_mode_passage()} · {m.trainer_drill_label()}</span>
       </a>
     </li>
   </ul>

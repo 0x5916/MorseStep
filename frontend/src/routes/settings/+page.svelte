@@ -30,10 +30,14 @@
     saveClientCwSettings
   } from '$lib/cwSync';
   import { localizeApiError } from '$lib/errorLocalization';
+  import { createWebAudioEngine } from '$lib/audio/engine';
+  import { buildAudioPlan } from '$lib/training/timing';
+  import { deleteTrainingDb } from '$lib/data/training-db';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import GuestNotice from '$lib/components/GuestNotice.svelte';
   import SaveButton from '$lib/components/SaveButton.svelte';
+  import { Volume2, Trash2 } from '@lucide/svelte';
   import * as m from '$lib/paraglide/messages';
 
   // Account section
@@ -89,6 +93,30 @@
   let loading = $state(true);
   let loadError = $state('');
   let lastAuthLoaded = $state<boolean | null>(null);
+
+  let confirmClearOpen = $state(false);
+  let clearSuccess = $state(false);
+
+  function playTestTone() {
+    try {
+      const engine = createWebAudioEngine();
+      const plan = buildAudioPlan('E', { frequency: freq, charWpm, effWpm });
+      engine.play(plan);
+    } catch (err) {
+      console.error('Failed to play test tone:', err);
+    }
+  }
+
+  async function handleClearLocalData() {
+    try {
+      await deleteTrainingDb();
+      confirmClearOpen = false;
+      clearSuccess = true;
+      setTimeout(() => (clearSuccess = false), 3000);
+    } catch (err) {
+      console.error('Failed to clear local training data:', err);
+    }
+  }
 
   const passwordDirty = $derived(
     currentPassword.trim() !== '' || newPassword.trim() !== '' || confirmPassword.trim() !== ''
@@ -614,7 +642,19 @@
         </label>
         <label class="field">
           <span class="label-text">{m.trainer_label_freq()}</span>
-          <input type="number" bind:value={freq} min="300" max="2000" class="input" />
+          <div class="settings-input-action">
+            <input type="number" bind:value={freq} min="300" max="2000" class="input" />
+            <button
+              type="button"
+              class="btn-ghost"
+              onclick={playTestTone}
+              title="Play test tone"
+              aria-label="Play test tone"
+            >
+              <Volume2 size={16} />
+              <span>Test tone</span>
+            </button>
+          </div>
         </label>
         <label class="field">
           <span class="label-text">{m.trainer_label_start_delay()}</span>
@@ -629,6 +669,49 @@
           </div>
         {/if}
       </form>
+    </section>
+
+    <!-- Data Management -->
+    <section class="panel panel--ledger">
+      <h2 class="card-title">Data Management</h2>
+      <div class="settings-form">
+        <p class="field-hint">
+          Manage local training attempts, session histories, and offline caches saved in your
+          browser.
+        </p>
+
+        <div class="data-actions-row">
+          <button
+            type="button"
+            class="btn-ghost text-danger"
+            onclick={() => (confirmClearOpen = true)}
+          >
+            <Trash2 size={16} />
+            <span>Clear local session data</span>
+          </button>
+          {#if clearSuccess}
+            <span class="clear-success-label">Local training data cleared</span>
+          {/if}
+        </div>
+
+        {#if confirmClearOpen}
+          <div class="confirm-clear-box" role="alertdialog" aria-labelledby="confirm-clear-title">
+            <p id="confirm-clear-title" class="confirm-clear-text">
+              Are you sure? This will delete all locally stored MorseStep attempts and session
+              records from this browser. Your server account credentials and cloud profile will
+              remain intact.
+            </p>
+            <div class="confirm-actions">
+              <button type="button" class="btn-primary" onclick={handleClearLocalData}>
+                Confirm deletion
+              </button>
+              <button type="button" class="btn-ghost" onclick={() => (confirmClearOpen = false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
     </section>
   {/if}
 </div>
@@ -679,6 +762,45 @@
   .settings-action-row {
     display: flex;
     justify-content: flex-end;
+  }
+
+  .data-actions-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-top: var(--space-2);
+  }
+
+  .text-danger {
+    color: var(--danger, var(--status-bad));
+  }
+
+  .clear-success-label {
+    font-size: var(--text-xs);
+    color: var(--status-good);
+  }
+
+  .confirm-clear-box {
+    margin-top: var(--space-3);
+    padding: var(--space-4);
+    background-color: var(--bg-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .confirm-clear-text {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: var(--space-3);
   }
 
   @media (max-width: 720px) {

@@ -1,7 +1,9 @@
 {
   "nav_home": "Home",
-  "nav_train": "Train",
+  "nav_learn": "Learn",
+  "nav_practice": "Practice",
   "nav_progress": "Progress",
+  "nav_profile": "Profile",
   "nav_forum": "Forum",
   "nav_about": "About",
   "nav_settings": "Settings",

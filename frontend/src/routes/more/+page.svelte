@@ -7,8 +7,10 @@
     Languages,
     LogIn,
     LogOut,
+    MessageSquare,
     Monitor,
     Settings,
+    User,
     UserPlus
   } from '@lucide/svelte';
   import { logout, user } from '$lib/auth';
@@ -72,6 +74,11 @@
       <a href={href('/')} class="more-link"
         ><House size={16} aria-hidden="true" /><span class="more-link-text">{m.nav_home()}</span></a
       >
+      <a href={href('/forum')} class="more-link"
+        ><MessageSquare size={16} aria-hidden="true" /><span class="more-link-text"
+          >{m.nav_forum()}</span
+        ></a
+      >
       <a href={href('/about')} class="more-link"
         ><Info size={16} aria-hidden="true" /><span class="more-link-text">{m.nav_about()}</span></a
       >
@@ -81,6 +88,10 @@
   <section class="panel panel--ledger">
     <h2 class="card-title">{m.settings_account_section()}</h2>
     <div class="more-list">
+      <a href={href('/profile')} class="more-link"
+        ><User size={16} aria-hidden="true" /><span class="more-link-text">{m.nav_profile()}</span
+        ></a
+      >
       <a href={href('/settings')} class="more-link"
         ><Settings size={16} aria-hidden="true" /><span class="more-link-text"
           >{m.nav_settings()}</span

@@ -12,6 +12,9 @@ export const ROUTE_PATHS = [
   '/forum',
   '/morse',
   '/morse/learn',
+  '/morse/learn/session',
+  '/morse/practice',
+  '/morse/progress',
   '/login',
   '/more',
   '/profile',
@@ -25,4 +28,13 @@ export const ROUTE_PATHS = [
  * a landing page.
  * @type {readonly string[]}
  */
-export const NOINDEX_ROUTE_PATHS = ['/login', '/register', '/profile', '/settings', '/more'];
+export const NOINDEX_ROUTE_PATHS = [
+  '/login',
+  '/register',
+  '/profile',
+  '/settings',
+  '/more',
+  '/morse/learn/session',
+  '/morse/practice',
+  '/morse/progress'
+];

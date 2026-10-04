@@ -1,0 +1,251 @@
+<script lang="ts">
+  import { browser } from '$app/environment';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
+  import { onDestroy, onMount } from 'svelte';
+  import { localizedHref } from '$lib/i18n.svelte';
+  import { createWebAudioEngine } from '$lib/audio/engine';
+  import { openTrainingDb } from '$lib/data/training-db';
+  import { createAttemptRepository } from '$lib/data/attempt-repository';
+  import { createSessionRepository } from '$lib/data/session-repository';
+  import { GuidedSessionController } from '$lib/training/v2/session-controller.svelte';
+  import type { InputMode } from '$lib/training/v2/types';
+  import SessionShell from '$lib/components/learning/SessionShell.svelte';
+  import AudioPrompt from '$lib/components/learning/AudioPrompt.svelte';
+  import AnswerInput from '$lib/components/learning/AnswerInput.svelte';
+  import CharacterGrid from '$lib/components/learning/CharacterGrid.svelte';
+  import PromptFeedback from '$lib/components/learning/PromptFeedback.svelte';
+  import ContrastRepair from '$lib/components/learning/ContrastRepair.svelte';
+  import SessionResult from '$lib/components/learning/SessionResult.svelte';
+
+  let controller = $state<GuidedSessionController | null>(null);
+  let db = $state<IDBDatabase | null>(null);
+  let comparingContrast = $state(false);
+  let onVisibility: (() => void) | null = null;
+
+  let step = $derived.by(() => {
+    if (!browser) return 1;
+    const s = page.url.searchParams.get('step');
+    const parsed = s ? parseInt(s, 10) : 1;
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+  });
+
+  onMount(async () => {
+    try {
+      const database = await openTrainingDb();
+      db = database;
+
+      const engine = createWebAudioEngine();
+
+      const attemptRepo = createAttemptRepository(database);
+      const sessionRepo = createSessionRepository(database);
+
+      // Load recent attempts to provide historical context for scheduler and progression
+      const recentAttempts = await attemptRepo.getAttemptsByTimeRange(
+        new Date(Date.now() - 30 * 86400000).toISOString(),
+        new Date().toISOString()
+      );
+
+      const ctrl = new GuidedSessionController({
+        step,
+        audioEngine: engine,
+        attemptRepo,
+        sessionRepo,
+        allHistoricalAttempts: recentAttempts
+      });
+
+      controller = ctrl;
+      await ctrl.start();
+
+      onVisibility = () => {
+        ctrl.handleVisibilityChange(document.hidden);
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+    } catch (err) {
+      console.error('Failed to initialize guided session:', err);
+    }
+  });
+
+  onDestroy(() => {
+    if (onVisibility && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibility);
+      onVisibility = null;
+    }
+    if (controller) {
+      controller.dispose();
+      controller = null;
+    }
+    if (db) {
+      db.close();
+      db = null;
+    }
+  });
+
+  function handleExit() {
+    if (controller) {
+      controller.abandon();
+    }
+    void goto(localizedHref('/morse/learn'));
+  }
+
+  function handlePauseToggle() {
+    if (!controller) return;
+    if (controller.phase === 'paused') {
+      controller.resume();
+    } else {
+      controller.pause();
+    }
+  }
+
+  function handleSubmitAnswer(text: string, mode: InputMode) {
+    if (!controller) return;
+    controller.submitAnswer(text, mode);
+  }
+
+  function handleContinue() {
+    if (!controller) return;
+    comparingContrast = false;
+    controller.continue();
+  }
+
+  function handleNextLesson() {
+    const nextStep = (controller?.summary?.step ?? step) + 1;
+    void goto(localizedHref(`/morse/learn/session?step=${nextStep}`));
+  }
+
+  function handleRepeatLesson() {
+    void goto(localizedHref(`/morse/learn/session?step=${step}`));
+  }
+</script>
+
+<svelte:head>
+  <title>Lesson {step} · MorseStep</title>
+</svelte:head>
+
+{#if !browser || !controller}
+  <div class="loading-stage">
+    <div class="skeleton loading-box"></div>
+  </div>
+{:else}
+  <SessionShell
+    currentPromptIndex={controller.currentPromptIndex}
+    totalPrompts={controller.totalPrompts}
+    isPaused={controller.phase === 'paused'}
+    canPause={controller.phase !== 'complete' && controller.phase !== 'abandoned'}
+    onExit={handleExit}
+    onPauseToggle={handlePauseToggle}
+  >
+    {#if controller.phase === 'paused'}
+      <div class="paused-banner">
+        <h2>Session Paused</h2>
+        <button type="button" class="btn-primary" onclick={() => controller?.resume()}>
+          Resume session
+        </button>
+      </div>
+    {:else if controller.phase === 'complete' && controller.summary}
+      <SessionResult
+        summary={controller.summary}
+        onNextLesson={handleNextLesson}
+        onRepeatLesson={handleRepeatLesson}
+        onFinish={handleExit}
+      />
+    {:else if comparingContrast && controller.currentPrompt && controller.lastAttempt}
+      <ContrastRepair
+        charA={controller.currentPrompt.spec.expectedText}
+        charB={controller.lastAttempt.enteredText}
+        onPlayA={() => controller?.play()}
+        onPlayB={() => {}}
+        onContinue={() => (comparingContrast = false)}
+      />
+    {:else if controller.phase === 'feedback' && controller.lastAttempt && controller.currentPrompt}
+      <PromptFeedback
+        classification={controller.lastAttempt.classification}
+        expected={controller.currentPrompt.spec.expectedText}
+        entered={controller.lastAttempt.enteredText}
+        onContinue={handleContinue}
+        onPlayExpected={() => controller?.play()}
+        onCompare={() => (comparingContrast = true)}
+      />
+    {:else if controller.currentPrompt}
+      <div class="prompt-stage">
+        <AudioPrompt
+          phase={controller.phase}
+          replayCount={controller.replayCount}
+          isIntro={controller.currentPrompt.spec.kind === 'introduction'}
+          introCharacter={controller.currentPrompt.spec.expectedText}
+          onPlay={() => controller?.play()}
+          onReplay={() => controller?.replay()}
+        />
+
+        {#if controller.currentPrompt.spec.kind === 'introduction'}
+          <div class="intro-actions">
+            <button
+              type="button"
+              class="btn-primary"
+              disabled={controller.phase === 'playing'}
+              onclick={handleContinue}
+            >
+              Continue
+            </button>
+          </div>
+        {:else if controller.currentPrompt.spec.options && controller.currentPrompt.spec.options.length > 0}
+          <CharacterGrid
+            options={controller.currentPrompt.spec.options}
+            disabled={controller.phase !== 'answering'}
+            onSelect={(ch) => handleSubmitAnswer(ch, 'grid')}
+          />
+        {:else}
+          <AnswerInput
+            disabled={controller.phase !== 'answering'}
+            expectedLength={controller.currentPrompt.spec.expectedText.length}
+            onSubmit={(text, mode) => handleSubmitAnswer(text, mode)}
+          />
+        {/if}
+      </div>
+    {/if}
+  </SessionShell>
+{/if}
+
+<style>
+  .loading-stage {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-base);
+  }
+
+  .loading-box {
+    width: 20rem;
+    height: 14rem;
+  }
+
+  .prompt-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
+
+  .intro-actions {
+    margin-top: var(--space-4);
+  }
+
+  .paused-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-8);
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  .paused-banner h2 {
+    margin: 0;
+    font-size: var(--text-xl);
+    color: var(--text-primary);
+  }
+</style>

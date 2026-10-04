@@ -1,0 +1,24 @@
+{
+  "name": "MorseStep - Sound-First Morse Code Training",
+  "short_name": "MorseStep",
+  "description": "Learn Morse code (CW) using the sound-first Koch method.",
+  "start_url": "/morse/learn",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#17140f",
+  "theme_color": "#17140f",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

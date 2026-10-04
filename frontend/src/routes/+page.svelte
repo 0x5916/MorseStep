@@ -15,9 +15,9 @@
 
   // Where to go next: the four surfaces of the product as one plain list.
   const destinations = [
-    { path: '/morse/learn', title: m.nav_train, body: m.home_go_train },
+    { path: '/morse/learn', title: m.nav_learn, body: m.home_go_train },
     { path: '/forum', title: m.nav_forum, body: m.home_go_forum },
-    { path: '/profile', title: m.nav_progress, body: m.home_go_progress },
+    { path: '/morse/progress', title: m.nav_progress, body: m.home_go_progress },
     { path: '/about', title: m.nav_about, body: m.home_go_about }
   ];
 

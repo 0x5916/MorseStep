@@ -1,0 +1,135 @@
+/**
+ * Character Mastery Reducer for MorseStep V2.
+ *
+ * Derives explainable character-level mastery from immutable AttemptEvents:
+ * - Pure function: depends strictly on attempts, policy configuration, and clock.
+ * - Enforces two-session rule: multiple attempts within a single session can never satisfy stability.
+ * - Rolling window for accuracy and latency calculation.
+ * - Distinguishes speed automaticity from accuracy: slow correct answers raise accuracy but not speed.
+ * - Identifies review-due characters when time elapsed exceeds reviewIntervalDays.
+ */
+
+import {
+  DEFAULT_MASTERY_POLICY,
+  type AttemptEvent,
+  type CharacterMastery,
+  type MasteryPolicy,
+  type MasteryStatus
+} from './types';
+
+export interface ReduceMasteryOptions {
+  policy?: MasteryPolicy;
+  nowIso?: string;
+}
+
+function calculateMedian(numbers: number[]): number | null {
+  if (numbers.length === 0) return null;
+  const sorted = [...numbers].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 1) {
+    return sorted[mid];
+  }
+  return Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+/**
+ * Calculates character mastery metrics and status from attempt history.
+ */
+export function reduceCharacterMastery(
+  character: string,
+  allAttempts: AttemptEvent[],
+  options: ReduceMasteryOptions = {}
+): CharacterMastery {
+  const policy = options.policy ?? DEFAULT_MASTERY_POLICY;
+  const nowIso = options.nowIso ?? new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
+
+  // Filter scored attempts targeting this character
+  const charAttempts = allAttempts
+    .filter(
+      (a) =>
+        a.targetCharacter.toUpperCase() === character.toUpperCase() &&
+        a.classification !== 'unmeasured'
+    )
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+  const totalAttempts = charAttempts.length;
+
+  if (totalAttempts === 0) {
+    return {
+      character,
+      status: 'new',
+      totalAttempts: 0,
+      correctAttempts: 0,
+      rollingAccuracy: 0,
+      medianLatencyMs: null,
+      replayRate: 0,
+      sessionCount: 0,
+      lastPractisedAt: null,
+      dueForReviewAt: null,
+      updatedAt: nowIso
+    };
+  }
+
+  const correctAttempts = charAttempts.filter((a) => a.isCorrect).length;
+  const distinctSessions = new Set(charAttempts.map((a) => a.sessionId));
+  const sessionCount = distinctSessions.size;
+
+  // Rolling window over most recent attempts
+  const windowStart = Math.max(0, totalAttempts - policy.rollingWindowSize);
+  const windowAttempts = charAttempts.slice(windowStart);
+  const windowCount = windowAttempts.length;
+
+  const windowCorrect = windowAttempts.filter((a) => a.isCorrect).length;
+  const rollingAccuracy = windowCount > 0 ? windowCorrect / windowCount : 0;
+
+  const correctLatencies = windowAttempts.filter((a) => a.isCorrect).map((a) => a.latencyMs);
+
+  const medianLatencyMs = calculateMedian(correctLatencies);
+
+  const replaysInWindow = windowAttempts.filter((a) => a.replayCount > 0).length;
+  const replayRate = windowCount > 0 ? replaysInWindow / windowCount : 0;
+
+  const lastPractisedAt = charAttempts[totalAttempts - 1].createdAt;
+  const lastPractisedMs = Date.parse(lastPractisedAt);
+
+  // Calculate review due timestamp
+  const reviewDueMs = lastPractisedMs + policy.reviewIntervalDays * 86400000;
+  const dueForReviewAt = new Date(reviewDueMs).toISOString();
+  const isOverdue = nowMs >= reviewDueMs;
+
+  // Determine MasteryStatus:
+  // Stability requires:
+  // 1. Min total attempts
+  // 2. Multi-session proof (>= minSessions)
+  // 3. High rolling accuracy (>= targetAccuracy)
+  // 4. Low latency (<= maxAutomaticLatencyMs)
+  const hasMinAttempts = totalAttempts >= policy.minAttemptsForStability;
+  const hasMultiSession = sessionCount >= policy.minSessionsForStability;
+  const hasAccuracy = rollingAccuracy >= policy.targetAccuracy;
+  const hasAutomaticSpeed =
+    medianLatencyMs !== null && medianLatencyMs <= policy.maxAutomaticLatencyMs;
+
+  let status: MasteryStatus;
+
+  if (hasMinAttempts && hasMultiSession && hasAccuracy && hasAutomaticSpeed) {
+    status = isOverdue ? 'review' : 'stable';
+  } else {
+    status = 'learning';
+  }
+
+  return {
+    character,
+    status,
+    totalAttempts,
+    correctAttempts,
+    rollingAccuracy: Math.round(rollingAccuracy * 1000) / 1000,
+    medianLatencyMs,
+    replayRate: Math.round(replayRate * 1000) / 1000,
+    sessionCount,
+    lastPractisedAt,
+    dueForReviewAt,
+    updatedAt: nowIso
+  };
+}

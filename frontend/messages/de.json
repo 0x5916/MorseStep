@@ -1,7 +1,9 @@
 {
   "nav_home": "Startseite",
-  "nav_train": "Üben",
+  "nav_learn": "Lernen",
+  "nav_practice": "Üben",
   "nav_progress": "Fortschritt",
+  "nav_profile": "Profil",
   "nav_forum": "Forum",
   "nav_about": "Über",
   "nav_settings": "Kontoeinstellungen",
