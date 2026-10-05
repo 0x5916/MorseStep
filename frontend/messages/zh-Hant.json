@@ -363,5 +363,24 @@
   "api_error_reply_not_found": "找不到該回覆，可能已被刪除。",
   "api_error_not_author": "只有作者本人可以刪除此內容。",
   "api_error_email_not_verified": "發文前請先驗證電郵。",
-  "api_error_invalid_query_parameter": "分頁游標無效，請重新載入論壇。"
+  "api_error_invalid_query_parameter": "分頁游標無效，請重新載入論壇。",
+
+  "learn_title": "用耳朵學習摩爾斯電碼",
+  "learn_subtitle": "透過短時間練習逐步聽辨聲音，一次學習一課。",
+  "learn_path_title": "你的課程",
+  "learn_path_unlocked": "已解鎖 {count} 課，共 {total} 課",
+  "learn_path_hint": "隨時回到之前的課程複習。聽辨能力提升後，就能解鎖新的課程。",
+  "learn_path_earlier": "之前的課程（{count}）",
+  "learn_path_upcoming": "後續課程（{count}）",
+  "learn_path_lesson": "第 {step} 課",
+  "learn_path_lesson_label": "第 {step} 課：{characters}，{status}",
+  "learn_status_stable": "已掌握",
+  "learn_status_current": "目前課程",
+  "learn_status_review": "需要複習",
+  "learn_status_available": "可以練習",
+  "learn_status_locked": "尚未解鎖",
+  "learn_status_unmeasured": "尚未評估",
+  "learn_practice_hint": "想自行選擇字元，或練習更長的文章？",
+  "learn_practice_cta": "查看練習模式",
+  "learn_next_recommendation": "建議練習"
 }

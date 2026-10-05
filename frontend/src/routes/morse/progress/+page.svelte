@@ -7,7 +7,7 @@
   import { openTrainingDb } from '$lib/data/training-db';
   import { createAttemptRepository } from '$lib/data/attempt-repository';
   import { createSessionRepository } from '$lib/data/session-repository';
-  import { reduceCharacterMastery } from '$lib/training/v2/mastery';
+  import { reduceCharacterMasteries } from '$lib/training/v2/mastery';
   import type { CharacterMastery, ConfusionPair } from '$lib/training/v2/types';
   import CharacterMasteryGrid from '$lib/components/progress/CharacterMasteryGrid.svelte';
   import ConfusionList from '$lib/components/progress/ConfusionList.svelte';
@@ -49,14 +49,11 @@
       totalMinutes7Days = sessionCount7Days * 4; // approximately 4 min per session
 
       // Character masteries
-      const map = new SvelteMap<string, CharacterMastery>();
+      const map = new SvelteMap(
+        reduceCharacterMasteries(LESSONS.join('').split(''), allAttempts, { nowIso })
+      );
       const slow: string[] = [];
-      const allChars = LESSONS.join('').split('');
-
-      for (const ch of allChars) {
-        const charMastery = reduceCharacterMastery(ch, allAttempts);
-        map.set(ch, charMastery);
-
+      for (const [ch, charMastery] of map) {
         if (
           charMastery.medianLatencyMs !== null &&
           charMastery.medianLatencyMs > 2000 &&

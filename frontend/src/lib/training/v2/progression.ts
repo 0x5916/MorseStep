@@ -13,7 +13,7 @@
  */
 
 import { LESSONS, getLessonChars } from '../sequence';
-import { reduceCharacterMastery } from './mastery';
+import { reduceCharacterMasteries } from './mastery';
 import { DEFAULT_MASTERY_POLICY, type AttemptEvent, type MasteryPolicy } from './types';
 
 export type ProgressionAction = 'unlock-next' | 'review' | 'continue';
@@ -110,10 +110,14 @@ export function evaluateProgression(
 
   // Group all attempts (history + current session) by character
   const combinedAttempts = [...allHistoricalAttempts, ...sessionAttempts];
+  const characterMasteries = reduceCharacterMasteries(activeChars, combinedAttempts, {
+    policy,
+    nowIso
+  });
   const weakChars: string[] = [];
 
   for (const ch of activeChars) {
-    const mastery = reduceCharacterMastery(ch, combinedAttempts, { policy, nowIso });
+    const mastery = characterMasteries.get(ch)!;
 
     // Look at session performance for this specific character
     const charSessionAttempts = scoredSessionAttempts.filter(
@@ -146,10 +150,7 @@ export function evaluateProgression(
 
   // 5. Verify the introduced character(s) have sufficient evidence
   for (const introChar of introducedChars) {
-    const introMastery = reduceCharacterMastery(introChar, combinedAttempts, {
-      policy,
-      nowIso
-    });
+    const introMastery = characterMasteries.get(introChar)!;
 
     if (introMastery.sessionCount < policy.minSessionsForStability) {
       return {

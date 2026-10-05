@@ -15,6 +15,7 @@
   import GuestNotice from '$lib/components/GuestNotice.svelte';
   import { user } from '$lib/auth';
   import { Dumbbell } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages';
 
   let loading = $state(true);
   let errorMsg = $state('');
@@ -23,6 +24,7 @@
   let inProgressSession = $state<TrainingSessionRecord | null>(null);
   let masteryMap = $state<Map<string, CharacterMastery>>(new Map());
   let reviewChars = $state<string[]>([]);
+  let hasAttempts = $state(false);
 
   let heroKind = $derived.by<HeroStateKind>(() => {
     if (loading) return 'loading';
@@ -30,7 +32,7 @@
     if (inProgressSession) return 'resume';
     if (reviewChars.length > 0) return 'review-due';
     if (currentStep >= LESSONS.length) return 'complete';
-    if (currentStep === 1 && masteryMap.size === 0) return 'new';
+    if (currentStep === 1 && !hasAttempts) return 'new';
     return 'next';
   });
 
@@ -57,6 +59,7 @@
         new Date(Date.now() - 60 * 86400000).toISOString(),
         new Date().toISOString()
       );
+      hasAttempts = recentAttempts.length > 0;
 
       const map = new SvelteMap<string, CharacterMastery>();
       const needReview: string[] = [];
@@ -112,15 +115,14 @@
 </script>
 
 <svelte:head>
-  <title>Learn Morse · MorseStep</title>
+  <title>{m.nav_learn()} · MorseStep</title>
 </svelte:head>
 
-<div class="page-content page-narrow">
+<div class="page-narrow">
   <div class="learn-home-container">
     <header class="learn-header">
-      <div class="eyebrow">Learn Morse</div>
-      <h1 class="page-title">Your Koch Path</h1>
-      <p class="learn-subtitle">Short, sound-first recognition sessions. One step at a time.</p>
+      <h1 class="page-title">{m.learn_title()}</h1>
+      <p class="learn-subtitle">{m.learn_subtitle()}</p>
     </header>
 
     <LearnHero
@@ -141,18 +143,25 @@
 
     <section class="path-section" aria-labelledby="path-heading">
       <div class="section-header-row">
-        <h2 id="path-heading" class="section-title">Course Path</h2>
-        <span class="path-meta">{currentStep} of {LESSONS.length} unlocked</span>
+        <h2 id="path-heading" class="section-title">{m.learn_path_title()}</h2>
+        {#if !loading && !errorMsg}
+          <span class="path-meta">
+            {m.learn_path_unlocked({ count: currentStep, total: LESSONS.length })}
+          </span>
+        {/if}
       </div>
+      <p class="path-hint">{m.learn_path_hint()}</p>
 
-      <CoursePath {currentStep} {masteryMap} {suggestedStep} onSelectStep={handleStartLesson} />
+      {#if !loading && !errorMsg}
+        <CoursePath {currentStep} {masteryMap} {suggestedStep} onSelectStep={handleStartLesson} />
+      {/if}
     </section>
 
     <div class="practice-hub-cta">
-      <p class="practice-cta-text">Looking for self-directed drill or 60-second passages?</p>
+      <p class="practice-cta-text">{m.learn_practice_hint()}</p>
       <a href={localizedHref('/morse/practice')} class="btn-ghost practice-link">
-        <Dumbbell size={16} />
-        <span>Practice freely</span>
+        <Dumbbell size={16} aria-hidden="true" />
+        <span>{m.learn_practice_cta()}</span>
       </a>
     </div>
   </div>
@@ -162,26 +171,18 @@
   .learn-home-container {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: var(--space-8);
+    align-items: stretch;
+    gap: var(--space-6);
     width: 100%;
     margin: 0 auto;
   }
 
   .learn-header {
-    text-align: center;
+    text-align: left;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-2);
-  }
-
-  .eyebrow {
-    font-size: var(--text-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--learning-current, var(--accent));
   }
 
   .page-title {
@@ -211,6 +212,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
 
   .section-title {
@@ -225,18 +228,28 @@
     color: var(--text-muted);
   }
 
+  .path-hint {
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--text-secondary);
+  }
+
   .practice-hub-cta {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    justify-content: space-between;
     align-items: center;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
-    text-align: center;
+    gap: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+    text-align: left;
   }
 
   .practice-cta-text {
     margin: 0;
-    font-size: var(--text-xs);
+    max-width: 27rem;
+    font-size: var(--text-sm);
     color: var(--text-muted);
   }
 
@@ -244,5 +257,6 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
+    min-height: var(--answer-target-min);
   }
 </style>

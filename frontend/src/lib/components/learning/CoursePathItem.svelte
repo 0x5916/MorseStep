@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CheckCircle2, CircleDot, AlertCircle, Lock, Circle } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages';
 
   export type PathItemStatus =
     'stable' | 'current' | 'review' | 'available' | 'locked' | 'legacy-unverified';
@@ -18,17 +19,17 @@
   let statusLabel = $derived.by(() => {
     switch (status) {
       case 'stable':
-        return 'Stable';
+        return m.learn_status_stable();
       case 'current':
-        return 'Current';
+        return m.learn_status_current();
       case 'review':
-        return 'Review due';
+        return m.learn_status_review();
       case 'available':
-        return 'Ready';
+        return m.learn_status_available();
       case 'locked':
-        return 'Locked';
+        return m.learn_status_locked();
       case 'legacy-unverified':
-        return 'Not measured yet';
+        return m.learn_status_unmeasured();
     }
   });
 </script>
@@ -39,9 +40,10 @@
     class="path-item is-interactive"
     class:is-current={isCurrent}
     onclick={onSelect}
-    aria-label={`Lesson ${step}: ${characters}, ${statusLabel}`}
+    aria-label={m.learn_path_lesson_label({ step, characters, status: statusLabel })}
+    aria-current={isCurrent ? 'step' : undefined}
   >
-    <div class="node-icon status-{status}">
+    <div class="node-icon status-{status}" aria-hidden="true">
       {#if status === 'stable'}
         <CheckCircle2 size={16} />
       {:else if status === 'current'}
@@ -55,25 +57,21 @@
 
     <div class="node-details">
       <div class="node-title">
-        <span class="step-label">Lesson {step}</span>
+        <span class="step-label">{m.learn_path_lesson({ step })}</span>
         <span class="char-label">{characters}</span>
       </div>
       <span class="status-text status-text-{status}">{statusLabel}</span>
     </div>
   </button>
 {:else}
-  <div
-    class="path-item is-locked"
-    role="listitem"
-    aria-label={`Lesson ${step}: ${characters}, ${statusLabel}`}
-  >
-    <div class="node-icon status-locked">
+  <div class="path-item is-locked">
+    <div class="node-icon status-locked" aria-hidden="true">
       <Lock size={14} />
     </div>
 
     <div class="node-details">
       <div class="node-title">
-        <span class="step-label">Lesson {step}</span>
+        <span class="step-label">{m.learn_path_lesson({ step })}</span>
         <span class="char-label">{characters}</span>
       </div>
       <span class="status-text status-text-locked">{statusLabel}</span>
@@ -84,6 +82,9 @@
 <style>
   .path-item {
     display: flex;
+    width: 100%;
+    min-height: var(--answer-target-min);
+    text-align: left;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
@@ -110,8 +111,7 @@
   }
 
   .is-locked {
-    opacity: 0.6;
-    cursor: not-allowed;
+    background-color: var(--bg-base);
   }
 
   .node-icon {

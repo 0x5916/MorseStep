@@ -363,5 +363,24 @@
   "api_error_reply_not_found": "未找到该回复，可能已被删除。",
   "api_error_not_author": "只有作者本人可以删除此内容。",
   "api_error_email_not_verified": "发帖前请先验证邮箱。",
-  "api_error_invalid_query_parameter": "分页游标无效，请重新加载论坛。"
+  "api_error_invalid_query_parameter": "分页游标无效，请重新加载论坛。",
+
+  "learn_title": "用耳朵学习摩尔斯电码",
+  "learn_subtitle": "通过短时练习逐步听辨声音，一次学习一课。",
+  "learn_path_title": "你的课程",
+  "learn_path_unlocked": "已解锁 {count} 课，共 {total} 课",
+  "learn_path_hint": "随时回到之前的课程复习。听辨能力提升后，就能解锁新的课程。",
+  "learn_path_earlier": "之前的课程（{count}）",
+  "learn_path_upcoming": "后续课程（{count}）",
+  "learn_path_lesson": "第 {step} 课",
+  "learn_path_lesson_label": "第 {step} 课：{characters}，{status}",
+  "learn_status_stable": "已掌握",
+  "learn_status_current": "当前课程",
+  "learn_status_review": "需要复习",
+  "learn_status_available": "可以练习",
+  "learn_status_locked": "尚未解锁",
+  "learn_status_unmeasured": "尚未评估",
+  "learn_practice_hint": "想自行选择字符，或练习更长的文章？",
+  "learn_practice_cta": "查看练习模式",
+  "learn_next_recommendation": "推荐练习"
 }

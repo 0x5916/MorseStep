@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowRight, Play, RotateCcw, AlertCircle } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages';
 
   export type HeroStateKind =
     'new' | 'next' | 'review-due' | 'resume' | 'complete' | 'loading' | 'error';
@@ -29,12 +30,18 @@
   }: Props = $props();
 </script>
 
-<div class="learn-hero-card" role="region" aria-label="Next practice recommendation">
+<div
+  class="learn-hero-card"
+  role="region"
+  aria-label={m.learn_next_recommendation()}
+  aria-busy={kind === 'loading'}
+>
   {#if kind === 'loading'}
-    <div class="skeleton hero-skeleton-eyebrow"></div>
-    <div class="skeleton hero-skeleton-title"></div>
-    <div class="skeleton hero-skeleton-desc"></div>
-    <div class="skeleton hero-skeleton-btn"></div>
+    <span class="sr-only" role="status">{m.common_loading()}</span>
+    <div class="skeleton hero-skeleton-eyebrow" aria-hidden="true"></div>
+    <div class="skeleton hero-skeleton-title" aria-hidden="true"></div>
+    <div class="skeleton hero-skeleton-desc" aria-hidden="true"></div>
+    <div class="skeleton hero-skeleton-btn" aria-hidden="true"></div>
   {:else if kind === 'error'}
     <div class="hero-error" role="alert">
       <AlertCircle size={24} />
@@ -111,6 +118,7 @@
     padding: var(--space-6);
     background-color: var(--bg-surface);
     border: 1px solid var(--border-subtle);
+    border-inline-start: 3px solid var(--accent);
     border-radius: var(--radius-md);
     width: 100%;
     max-width: var(--max-width-narrow, 46rem);
@@ -120,8 +128,6 @@
   .hero-eyebrow {
     font-size: var(--text-xs);
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
     color: var(--learning-current, var(--accent));
   }
 
@@ -167,6 +173,10 @@
     align-items: flex-start;
     gap: var(--space-3);
     color: var(--learning-error, var(--status-bad));
+  }
+
+  .skeleton {
+    max-width: 100%;
   }
 
   .hero-skeleton-eyebrow {

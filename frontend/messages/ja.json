@@ -362,5 +362,24 @@
   "api_error_reply_not_found": "この返信は見つかりませんでした。削除された可能性があります。",
   "api_error_not_author": "このコンテンツを削除できるのは投稿者本人だけです。",
   "api_error_email_not_verified": "投稿する前にメールアドレスを認証してください。",
-  "api_error_invalid_query_parameter": "ページカーソルが無効です。フォーラムを再読み込みしてください。"
+  "api_error_invalid_query_parameter": "ページカーソルが無効です。フォーラムを再読み込みしてください。",
+
+  "learn_title": "耳でモールス符号を学ぶ",
+  "learn_subtitle": "短い練習を重ねて、一つずつ音を聞き分けられるようになりましょう。",
+  "learn_path_title": "学習コース",
+  "learn_path_unlocked": "全{total}レッスン中{count}レッスンが利用可能",
+  "learn_path_hint": "前のレッスンはいつでも復習できます。音を聞き分けられるようになると、次のレッスンに進めます。",
+  "learn_path_earlier": "前のレッスン（{count}）",
+  "learn_path_upcoming": "これからのレッスン（{count}）",
+  "learn_path_lesson": "レッスン{step}",
+  "learn_path_lesson_label": "レッスン{step}：{characters}、{status}",
+  "learn_status_stable": "習得済み",
+  "learn_status_current": "現在のレッスン",
+  "learn_status_review": "復習が必要",
+  "learn_status_available": "練習できます",
+  "learn_status_locked": "まだ利用できません",
+  "learn_status_unmeasured": "未評価",
+  "learn_practice_hint": "文字を自分で選んだり、長めの文章を練習したりしたいですか？",
+  "learn_practice_cta": "練習メニューを見る",
+  "learn_next_recommendation": "おすすめの練習"
 }

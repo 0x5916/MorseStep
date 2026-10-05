@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { reduceCharacterMastery } from './mastery';
-import type { AttemptEvent } from './types';
+import { describe, expect, it, vi } from 'vitest';
+import { reduceCharacterMasteries, reduceCharacterMastery } from './mastery';
+import { DEFAULT_MASTERY_POLICY, type AttemptEvent } from './types';
+import { LESSONS } from '../sequence';
 
 function createMockAttempt(overrides: Partial<AttemptEvent> = {}): AttemptEvent {
   return {
@@ -154,5 +155,95 @@ describe('Character Mastery Reducer', () => {
     expect(mastery.medianLatencyMs).toBe(2850);
     // Because medianLatency exceeds 1500ms, it remains learning:
     expect(mastery.status).toBe('learning');
+  });
+});
+
+describe('Batch Character Mastery Reducer', () => {
+  const nowIso = '2026-10-05T12:00:00.000Z';
+
+  it('matches every single-reducer field for shuffled, mixed-case and equal-time histories', () => {
+    const symbols = ['k', 'M', '.', '/', '?'];
+    const history = Array.from({ length: 80 }, (_, i) =>
+      createMockAttempt({
+        id: `mixed_${i}`,
+        sessionId: `session_${i % 3}`,
+        targetCharacter: symbols[i % symbols.length],
+        isCorrect: i % 4 !== 0,
+        classification: i % 7 === 0 ? 'unmeasured' : i % 4 === 0 ? 'missing' : 'automatic',
+        latencyMs: 900 + (i % 9) * 130,
+        replayCount: i % 3,
+        createdAt: new Date(Date.parse('2026-10-03T12:00:00.000Z') + (i % 8) * 1000).toISOString()
+      })
+    ).reverse();
+    const characters = ['K', 'k', 'M', '.', '/', '?', 'Z', ''];
+    const options = {
+      nowIso,
+      policy: { ...DEFAULT_MASTERY_POLICY, rollingWindowSize: 4, reviewIntervalDays: 2 }
+    };
+    const results = reduceCharacterMasteries(characters, history, options);
+    for (const character of characters) {
+      expect(results.get(character)).toEqual(reduceCharacterMastery(character, history, options));
+    }
+  });
+
+  it('preserves requested case keys and collapses only exact duplicate keys', () => {
+    const results = reduceCharacterMasteries(['T', 't', 'T'], [createMockAttempt()], { nowIso });
+    expect([...results.keys()]).toEqual(['T', 't']);
+    expect(results.get('T')?.character).toBe('T');
+    expect(results.get('t')).toEqual({ ...results.get('T'), character: 't' });
+  });
+
+  it('handles missing symbols, an empty symbol and an empty request', () => {
+    const history = [createMockAttempt({ classification: 'unmeasured' })];
+    const results = reduceCharacterMasteries(['T', 'Z', ''], history, { nowIso });
+    for (const character of results.keys()) {
+      expect(results.get(character)).toEqual(reduceCharacterMastery(character, [], { nowIso }));
+    }
+    expect(reduceCharacterMasteries([], history, { nowIso }).size).toBe(0);
+  });
+
+  it('does not mutate frozen histories', () => {
+    const history = Object.freeze([
+      Object.freeze(createMockAttempt({ createdAt: '2026-10-04T12:00:00.000Z' })),
+      Object.freeze(createMockAttempt({ id: 'older', createdAt: '2026-10-01T12:00:00.000Z' }))
+    ]);
+    const before = JSON.stringify(history);
+    reduceCharacterMasteries(Object.freeze(['T', 'M']), history, { nowIso });
+    expect(JSON.stringify(history)).toBe(before);
+  });
+
+  it('resolves one default snapshot time even when the clock advances', () => {
+    const clock = vi
+      .spyOn(Date.prototype, 'toISOString')
+      .mockReturnValueOnce(nowIso)
+      .mockReturnValue('2026-10-05T12:00:00.001Z');
+    try {
+      const results = reduceCharacterMasteries(['T', 'M'], []);
+      expect(clock).toHaveBeenCalledTimes(1);
+      expect(results.get('T')?.updatedAt).toBe(nowIso);
+      expect(results.get('M')?.updatedAt).toBe(nowIso);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('reads history targets at most twice instead of once per curriculum character', () => {
+    const characters = LESSONS.join('').split('');
+    let reads = 0;
+    const history = Array.from({ length: 400 }, (_, i) => {
+      const character = characters[i % characters.length];
+      return {
+        ...createMockAttempt({ id: `counted_${i}` }),
+        get targetCharacter() {
+          reads++;
+          return character;
+        }
+      };
+    });
+    reduceCharacterMasteries([...characters, 'k', 'K'], history, { nowIso });
+    expect(reads).toBeLessThanOrEqual(history.length * 2);
+    reads = 0;
+    for (const character of characters) reduceCharacterMastery(character, history, { nowIso });
+    expect(reads).toBe(history.length * characters.length);
   });
 });

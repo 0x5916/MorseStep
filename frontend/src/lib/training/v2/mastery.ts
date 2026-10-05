@@ -22,6 +22,45 @@ export interface ReduceMasteryOptions {
   nowIso?: string;
 }
 
+/**
+ * Reduces a history snapshot with one indexing pass and one reduction per distinct symbol.
+ * Result keys preserve the requested spelling and share one evaluation time.
+ * Use the single-character reducer when an incremental scan can stop early.
+ */
+export function reduceCharacterMasteries(
+  characters: readonly string[],
+  allAttempts: readonly AttemptEvent[],
+  options: ReduceMasteryOptions = {}
+): Map<string, CharacterMastery> {
+  if (characters.length === 0) return new Map();
+  const snapshotOptions = { ...options, nowIso: options.nowIso ?? new Date().toISOString() };
+  const attemptsByCharacter = new Map<string, AttemptEvent[]>();
+  for (const attempt of allAttempts) {
+    if (attempt.classification === 'unmeasured') continue;
+    const key = attempt.targetCharacter.toUpperCase();
+    const bucket = attemptsByCharacter.get(key);
+    if (bucket) bucket.push(attempt);
+    else attemptsByCharacter.set(key, [attempt]);
+  }
+
+  const normalizedMasteries = new Map<string, CharacterMastery>();
+  const results = new Map<string, CharacterMastery>();
+  for (const character of new Set(characters)) {
+    const key = character.toUpperCase();
+    let mastery = normalizedMasteries.get(key);
+    if (!mastery) {
+      mastery = reduceCharacterMastery(
+        character,
+        attemptsByCharacter.get(key) ?? [],
+        snapshotOptions
+      );
+      normalizedMasteries.set(key, mastery);
+    }
+    results.set(character, mastery.character === character ? mastery : { ...mastery, character });
+  }
+  return results;
+}
+
 function calculateMedian(numbers: number[]): number | null {
   if (numbers.length === 0) return null;
   const sorted = [...numbers].sort((a, b) => a - b);
@@ -38,7 +77,7 @@ function calculateMedian(numbers: number[]): number | null {
  */
 export function reduceCharacterMastery(
   character: string,
-  allAttempts: AttemptEvent[],
+  allAttempts: readonly AttemptEvent[],
   options: ReduceMasteryOptions = {}
 ): CharacterMastery {
   const policy = options.policy ?? DEFAULT_MASTERY_POLICY;
