@@ -39,6 +39,8 @@ func Connect() {
 		&models.Progress{},
 		&models.ForumThread{},
 		&models.ForumReply{},
+		&models.TrainingEvent{},
+		&models.TrainingProfile{},
 	); err != nil {
 		slog.Error("Failed to migrate database", "err", err)
 	}

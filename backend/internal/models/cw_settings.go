@@ -12,6 +12,10 @@ type CWSettings struct {
 	EffWPM     int       `gorm:"not null"`
 	Freq       int       `gorm:"not null"`
 	StartDelay float64   `gorm:"not null"`
+	// TargetDailyMinutes is the learner's daily practice goal in minutes
+	// (MorseStep V2 motivation feature). Nullable: rows written by the V1
+	// settings endpoint leave it unset.
+	TargetDailyMinutes *int
 }
 
 func (CWSettings) TableName() string {

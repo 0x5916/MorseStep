@@ -130,3 +130,34 @@ Updates cloud-synchronized CW and learning preferences.
   "updated_at": "2026-10-04T12:01:00.000Z"
 }
 ```
+
+---
+
+## Appendix A: Implementation Notes (Server)
+
+Implementation: `backend/internal/handlers/v2/training.go`, registered by `RouterV2Setup` under the `/v2` group. All endpoints require the standard bearer token and user-loading middleware.
+
+### Storage
+- `training_events` — immutable attempt events. The composite unique key `(user_id, event_id)` enforces batch idempotency; inserts use `ON CONFLICT DO NOTHING`. `client_created_at` is the client measurement time; `created_at` is the server ingestion time.
+- `training_profiles` — per-user `suggested_step`, `unlocked_step`, `last_active_at`. Step fields seed from the legacy `page_settings.cur_lesson` on first ingestion (default 1) and are reserved for a future session-sync endpoint; `last_active_at` advances with each accepted batch.
+- `cw_settings` gains a nullable `target_daily_minutes` column (V2-only; V1 settings endpoints ignore it).
+
+### Per-event rejection codes (`rejected_events[].error_code`)
+`MISSING_FIELD`, `INVALID_FIELD`, `INVALID_TIMING`, `INVALID_CLASSIFICATION`, `INVALID_PROMPT_KIND`, `INVALID_INPUT_MODE`.
+
+### Batch-level errors
+| Status | Code | Condition |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST_BODY` | Malformed JSON or empty `events` |
+| 400 | `TRAINING_UNSUPPORTED_SCHEMA_VERSION` | `schema_version` ≠ 1 |
+| 400 | `TRAINING_BATCH_TOO_LARGE` | More than 100 events |
+| 413 | `TRAINING_PAYLOAD_TOO_LARGE` | Body exceeds 256 KB |
+| 500 | `TRAINING_INGEST_FAILED` / `TRAINING_SNAPSHOT_FAILED` / `TRAINING_SETTINGS_UPDATE_FAILED` | Storage failures |
+
+### Snapshot computation
+Character masteries are computed on read from stored events with the same policy constants as the client (`DEFAULT_MASTERY_POLICY` in `frontend/src/lib/training/v2/types.ts`): rolling window 20, stability requires ≥12 attempts across ≥2 sessions, accuracy ≥ 0.90, median correct latency ≤ 1500 ms, review due after 3 days without practice. Only characters with at least one scored attempt are returned; `unmeasured` attempts are excluded. The mirrored constants live in `internal/handlers/v2/training.go` (`masteryPolicy`) and must stay in sync with the client.
+
+### Deliberately out of scope for this revision
+- Client outbox flush wiring and `SyncStatus` integration (frontend).
+- Session-record sync (the source of future `suggested_step` / `unlocked_step` advancement).
+- A `GET /v2/training/settings` read counterpart.

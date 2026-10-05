@@ -37,6 +37,7 @@ func main() {
 
 	server.CORSSetup(r)
 	server.RouterV1Setup(r)
+	server.RouterV2Setup(r)
 
 	// Profiling endpoints in development only. In production (GIN_MODE=release, which the
 	// image sets) they would be an unauthenticated CPU-burn and heap-dump surface reachable

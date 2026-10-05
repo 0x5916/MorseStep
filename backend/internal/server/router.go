@@ -9,6 +9,7 @@ import (
 	"opencw/internal/configs"
 	"opencw/internal/databases"
 	handlers "opencw/internal/handlers/v1"
+	v2handlers "opencw/internal/handlers/v2"
 	"opencw/internal/middlewares"
 	"opencw/internal/models"
 
@@ -84,6 +85,24 @@ func RouterV1Setup(engine *gin.Engine) {
 		user := c.MustGet("user").(*models.User)
 		c.JSON(http.StatusOK, common.MessageResponse{Message: "Hello, authenticated user {" + user.Username + "}!"})
 	})
+}
+
+// RouterV2Setup registers the V2 training synchronization API
+// (see backend/docs/training-events-v2.md). All endpoints require a bearer
+// token and reuse the V1 auth and user-loading middleware. The legacy
+// /v1/cw/progress endpoint remains active and unaffected.
+func RouterV2Setup(engine *gin.Engine) {
+	v2 := engine.Group("/v2")
+
+	protected := v2.Group("/")
+	protected.Use(middlewares.AuthRequired())
+	protected.Use(middlewares.LoadUser(databases.DB))
+
+	trainingHandler := v2handlers.TrainingHandler{DB: databases.DB}
+	training := protected.Group("/training")
+	training.POST("/events/batch", trainingHandler.PostEventsBatch)
+	training.GET("/snapshot", trainingHandler.GetSnapshot)
+	training.PUT("/settings", trainingHandler.PutSettings)
 }
 
 func CORSSetup(engine *gin.Engine) {

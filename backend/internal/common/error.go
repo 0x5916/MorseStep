@@ -41,6 +41,22 @@ const (
 	ErrorCodeForumCreateFailed       = "FORUM_CREATE_FAILED"
 	ErrorCodeForumDeleteFailed       = "FORUM_DELETE_FAILED"
 	ErrorCodeForumRateLimited        = "FORUM_RATE_LIMITED"
+	ErrorCodeTrainingBatchTooLarge   = "TRAINING_BATCH_TOO_LARGE"
+	ErrorCodeTrainingPayloadTooLarge = "TRAINING_PAYLOAD_TOO_LARGE"
+	ErrorCodeTrainingSchemaVersion   = "TRAINING_UNSUPPORTED_SCHEMA_VERSION"
+	ErrorCodeTrainingIngestFailed    = "TRAINING_INGEST_FAILED"
+	ErrorCodeTrainingSnapshotFailed  = "TRAINING_SNAPSHOT_FAILED"
+	ErrorCodeTrainingSettingsFailed  = "TRAINING_SETTINGS_UPDATE_FAILED"
+)
+
+// Per-event rejection codes reported in TrainingEventBatchResponse.RejectedEvents.
+const (
+	RejectCodeMissingField          = "MISSING_FIELD"
+	RejectCodeInvalidField          = "INVALID_FIELD"
+	RejectCodeInvalidTiming         = "INVALID_TIMING"
+	RejectCodeInvalidClassification = "INVALID_CLASSIFICATION"
+	RejectCodeInvalidPromptKind     = "INVALID_PROMPT_KIND"
+	RejectCodeInvalidInputMode      = "INVALID_INPUT_MODE"
 )
 
 func NewErrorResponse(code string, message string) ErrorResponse {

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"time"
 
 	"opencw/internal/models"
@@ -95,4 +96,57 @@ type ListThreadsQuery struct {
 	Category string `form:"category" binding:"omitempty,oneof=general help showcase feedback"`
 	Limit    int    `form:"limit"    binding:"omitempty,min=1,max=100"`
 	Cursor   string `form:"cursor"`
+}
+
+// ── V2 Training API (see backend/docs/training-events-v2.md) ──
+
+const (
+	// TrainingV2SchemaVersion is the only accepted events payload schema version.
+	TrainingV2SchemaVersion = 1
+	// TrainingV2MaxBatchEvents bounds the number of events per upload batch.
+	TrainingV2MaxBatchEvents = 100
+	// TrainingV2MaxPayloadBytes bounds the total request body size of a batch.
+	TrainingV2MaxPayloadBytes = 256 * 1024
+)
+
+// TrainingEventBatchInput is the POST /v2/training/events/batch request body.
+// Events are bound as raw JSON so a single malformed event can be rejected
+// individually without poisoning valid siblings (partial acceptance).
+// SchemaVersion is validated by the handler so unsupported versions receive a
+// dedicated error code.
+type TrainingEventBatchInput struct {
+	SchemaVersion int               `json:"schema_version"`
+	ClientID      string            `json:"client_id"`
+	ClientSentAt  *string           `json:"client_sent_at"`
+	Events        []json.RawMessage `json:"events"`
+}
+
+// TrainingEventInput is a single attempt event inside a batch. Numeric and
+// boolean fields are pointers so a missing field is distinguishable from a
+// zero value during per-event validation.
+type TrainingEventInput struct {
+	ID              string  `json:"id"`
+	SessionID       string  `json:"session_id"`
+	PromptID        string  `json:"prompt_id"`
+	PromptKind      string  `json:"prompt_kind"`
+	TargetCharacter string  `json:"target_character"`
+	EnteredText     string  `json:"entered_text"`
+	IsCorrect       *bool   `json:"is_correct"`
+	Classification  string  `json:"classification"`
+	LatencyMS       *int    `json:"latency_ms"`
+	ReplayCount     *int    `json:"replay_count"`
+	InputMode       string  `json:"input_mode"`
+	CharWPM         *int    `json:"char_wpm"`
+	EffWPM          *int    `json:"eff_wpm"`
+	FreqHz          *int    `json:"freq_hz"`
+	CreatedAt       *string `json:"created_at"`
+}
+
+// TrainingSettingsInput is the PUT /v2/training/settings request body.
+type TrainingSettingsInput struct {
+	CharWPM            *int     `json:"char_wpm"             binding:"required,min=5,max=50"`
+	EffWPM             *int     `json:"eff_wpm"              binding:"required,min=5,max=50"`
+	Freq               *int     `json:"freq"                 binding:"required,min=300,max=2000"`
+	StartDelay         *float64 `json:"start_delay"          binding:"required,min=0.0,max=10.0"`
+	TargetDailyMinutes *int     `json:"target_daily_minutes" binding:"required,min=1,max=240"`
 }

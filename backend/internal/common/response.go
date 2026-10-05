@@ -46,6 +46,40 @@ type MessageResponse struct {
 	Message string `json:"message"`
 }
 
+// ── V2 Training API (see backend/docs/training-events-v2.md) ──
+
+// TrainingRejectedEvent describes a single event that failed per-event
+// validation inside an otherwise accepted batch.
+type TrainingRejectedEvent struct {
+	ID        string `json:"id"`
+	ErrorCode string `json:"error_code"`
+	Message   string `json:"message"`
+}
+
+type TrainingEventBatchResponse struct {
+	AcknowledgedIDs []string                `json:"acknowledged_ids"`
+	RejectedEvents  []TrainingRejectedEvent `json:"rejected_events"`
+}
+
+type TrainingCharacterMasteryResponse struct {
+	Character       string  `json:"character"`
+	Status          string  `json:"status"`
+	RollingAccuracy float64 `json:"rolling_accuracy"`
+	MedianLatencyMS *int    `json:"median_latency_ms"`
+	TotalAttempts   int     `json:"total_attempts"`
+}
+
+type TrainingSnapshotResponse struct {
+	SuggestedStep      int                                `json:"suggested_step"`
+	UnlockedStep       int                                `json:"unlocked_step"`
+	LastActiveAt       *time.Time                         `json:"last_active_at"`
+	CharacterMasteries []TrainingCharacterMasteryResponse `json:"character_masteries"`
+}
+
+type TrainingSettingsUpdateResponse struct {
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type ErrorResponse struct {
 	Code  string `json:"code"`
 	Error string `json:"error"`
