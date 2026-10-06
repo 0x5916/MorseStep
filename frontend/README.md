@@ -1,137 +1,42 @@
-# OpenCW Frontend
+# MorseStep frontend
 
-Web frontend for OpenCW — a Morse code (CW) training site with Koch-method lessons,
-progress tracking, and a community forum.
+The frontend (in the OpenCW repository) uses SvelteKit 5, TypeScript, Tailwind CSS 4, and Paraglide for English, German, Japanese, Simplified Chinese, and Traditional Chinese. Production uses `adapter-static` and nginx, with no SvelteKit server runtime.
 
-Built with SvelteKit (Svelte 5 runes), TypeScript, Paraglide i18n (en, de, ja, zh-Hans,
-zh-Hant) and Tailwind CSS (preflight; most UI is plain CSS/utility classes in `src/app.css`).
-The site is fully static: every page is prerendered for all five locales at build time
-and served as plain files — there is no server runtime.
+Known pages are prerendered in five locale variants. Forum thread IDs exist only at runtime: [`/forum/[id]`](src/routes/forum/[id]/+page.ts) renders client-side through the HTTP 200 fallback in [nginx.conf](nginx.conf). Other unknown URLs retain HTTP 404.
 
-## Requirements
+## Development
 
-- Node.js 26 (see the `Dockerfile`; `npm` 11+ recommended)
-- A running OpenCW API (defaults to `http://localhost:8080/v1` via `PUBLIC_API_BASE`)
-- TypeScript is held at 6.x: the TypeScript 7 native compiler has no stable API
-  yet, so svelte-check and typescript-eslint still require TypeScript 6.
-
-## Setup
+Use Node 26. From this directory:
 
 ```sh
+export PATH="/opt/homebrew/opt/node/bin:$PATH"
 npm ci
-cp example.env .env   # adjust PUBLIC_API_BASE if needed
+cp example.env .env
 npm run dev
 ```
 
-## Scripts
+Sound training stores guided attempts on the device. API access is needed for accounts, the forum, and server-backed settings/progress; follow the [backend setup](../backend/README.md) to start it. [example.env](example.env) defaults `PUBLIC_API_BASE` to `http://localhost:8080/v1`; `PRERENDER_ORIGIN` controls canonical and sitemap origins. Both are build-time values.
 
-| Script                      | Purpose                                                         |
-| --------------------------- | --------------------------------------------------------------- |
-| `npm run dev`               | Vite dev server with HMR                                        |
-| `npm run build`             | Static production build (prerendered site in `build/`)          |
-| `npm run start`             | Serve the production build locally (`vite preview`)             |
-| `npm run preview`           | Preview the production build                                    |
-| `npm run check`             | `svelte-kit sync` + `svelte-check` (TypeScript/Svelte errors)   |
-| `npm run check:scripts`     | `tsc` over `scripts/` (validators are outside the app tsconfig) |
-| `npm run test`              | Vitest unit tests (domain math, session, audio engine, sync)    |
-| `npm run test:watch`        | Vitest in watch mode                                            |
-| `npm run verify`            | All gates in order: messages, SEO, app check, scripts, tests    |
-| `npm run lint`              | Prettier check + ESLint                                         |
-| `npm run format`            | Prettier write                                                  |
-| `npm run messages:validate` | Message gate: locale parity, missing/extra keys                 |
-| `npm run seo:validate`      | SEO gate: sitemap coverage, metadata lengths, duplicate titles  |
-| `npm run icons`             | Regenerate favicons/social images from the source SVG           |
+## Checks and builds
 
-## Project layout
+[package.json](package.json) is the command inventory. `npm run verify` runs message validation, SEO validation, Svelte/TypeScript checking, script checking, and Vitest. Run `npm run lint` for Prettier/ESLint and `npm run build` for the static output in `build/`. `npm run preview` serves that build locally.
 
-```
-messages/          Paraglide translation catalogs (one JSON per locale)
-scripts/           Icon generation + message/SEO validators
-src/
-  app.css          Design tokens, base styles, shared UI classes
-  hooks.server.ts  Paraglide middleware (dev server + prerendering only)
-  lib/
-    api.ts         Typed API client (settings, user, forum, progress)
-    auth.ts        Token handling (login/register/refresh/logout) + apiFetch
-    cookies.ts     One-time migration from legacy preference cookies
-    cwSync.ts      Client/server CW + page settings reconciliation
-    errorCode.ts   API error-code extraction
-    errorLocalization.ts  Error code → localized message
-    format.ts      Date / lesson / percentage formatting helpers
-    i18n.svelte.ts Locale state + locale-aware hrefs
-    locale.ts      Locale matching + display labels
-    morse.ts       Compatibility facade over the training modules
-    training/      Pure domain modules: Koch sequence, Farnsworth timing,
-                   exercise generation, session state machine, result types
-    audio/         Web Audio engine (plan scheduling + playback lifecycle)
-    progressSync.ts Offline-first progress queue
-    score.ts       Accuracy scoring, word-level diff, grade thresholds
-    seo.ts         Route metadata, sitemap URL builder (used by scripts)
-    storageKeys.ts localStorage key registry
-    theme.ts       Theme normalization + apply helpers
-    components/    Shared UI (auth card, dropdown, Morse player, alerts, …)
-  routes/          Pages (home, about, learn, login, register, profile,
-                   settings, the forum list + /forum/[id] threads, and legacy
-                   /morse redirects)
-```
+`npm run check` compiles Paraglide before Svelte checking; `npm run build` compiles it through the Vite plugin. Tests run in Node via [vitest.config.ts](vitest.config.ts), including domain, controller, audio, sync, and repository tests. IndexedDB tests currently import `fake-indexeddb`, which is absent from the manifest and lockfile; a passing full verification gate must not be assumed until that dependency is resolved with approval.
 
-`/forum` is backed by the API: a cursor-paginated thread list with category
-filters and an inline composer, plus client-rendered thread pages at
-`/forum/[id]` with nested replies, author-only deletes and tombstones. Thread
-IDs only exist at runtime, so thread pages are not prerendered: deep links are
-served the adapter-static fallback by `nginx.conf`, which returns HTTP 200 for
-forum deep links so shared links open and unfurl correctly.
-
-## Internationalization
-
-- Message keys live in `messages/*.json`; all locales must define the same keys.
-- Paraglide output is generated into `src/lib/paraglide/` (gitignored) using the
-  shared options in `scripts/paraglide-options.ts`. `npm run check` compiles it
-  before `svelte-check`, and `npm run build` compiles it through the Vite plugin.
-  Run either command after changing keys in `messages/*.json`.
-- URLs are localized (`/de/...`, `/ja/...`, …). Every locale variant is
-  prerendered, so the active locale always comes from the URL.
-- Bare paths (`/about`) and legacy `/morse` URLs exist only in the base locale in
-  the build; once the app hydrates they redirect to the visitor's preferred
-  locale (stored in `localStorage`). Existing visitors' legacy preference
-  cookies are migrated once and then removed.
-
-## Validation gates
-
-`npm run verify` runs every gate in order, and the Docker build runs it before
-`vite build`, so a missing translation, a drifted noindex route or a type error
-cannot ship:
+[Dockerfile](Dockerfile) runs verification before building. To build and serve the image:
 
 ```sh
-npm run verify
-```
-
-- `messages:validate` — locale parity, placeholder consistency, missing and
-  unreferenced message keys.
-- `seo:validate` — sitemap coverage for all locales and indexable public routes,
-  noindex exclusion, title/description lengths, duplicate titles, and the nginx
-  locale list.
-- `check` — `svelte-kit sync` + `svelte-check`.
-- `check:scripts` — `tsc` over `scripts/**`, which the app tsconfig does not cover.
-- `test` — Vitest unit tests for the pure training modules (Koch sequence,
-  Farnsworth timing, exercise generation, scoring), the session state machine,
-  the Web Audio engine (with an injected fake context) and offline progress
-  persistence. No Svelte component or browser API is mounted.
-
-## Docker
-
-```sh
-docker build \
-  --build-arg PUBLIC_API_BASE=https://api.example.com/v1 \
-  --build-arg PRERENDER_ORIGIN=https://opencw.net \
-  -t opencw-frontend .
+docker build --build-arg PUBLIC_API_BASE=https://api.example.com/v1 --build-arg PRERENDER_ORIGIN=https://opencw.net -t opencw-frontend .
 docker run -p 3000:80 opencw-frontend
 ```
 
-The image builds the static site and serves it with nginx; the build stage runs
-`npm run verify` before `npm run build`. Both arguments are
-build-time values: `PUBLIC_API_BASE` is baked into the client bundle through
-`$env/static/public`, and `PRERENDER_ORIGIN` (default `https://opencw.net`) into
-the canonical/hreflang/Open Graph URLs and `sitemap.xml`. The bundled nginx
-config serves forum thread deep links (`/<locale>/forum/<id>`) the SPA fallback
-with a 200 status; every other unknown URL keeps its 404 status.
+## Documentation and source ownership
+
+- [AGENTS.md](AGENTS.md): implementation boundaries and required verification evidence.
+- [Learning architecture](docs/learning.md): routes, domain/controller boundaries, storage, and UI acceptance.
+- [UI/UX backlog](docs/ui-ux-audit.md): remaining source findings and required browser validation.
+- [messages/](messages/): translation source catalogs; all five must contain matching keys and placeholders.
+- [project.inlang/settings.json](project.inlang/settings.json) and [Paraglide options](scripts/paraglide-options.ts): locale/compiler configuration. SDK-generated inlang notes/cache and `src/lib/paraglide/` are not maintained documentation.
+- [src/app.css](src/app.css) and [layout styles](src/lib/styles/layout.css): tokens, shared controls, and page/navigation layout.
+
+The root [repository instructions](../AGENTS.md) also apply. Keep current architecture here and actionable gaps in the backlog; record command results and one-time working-tree snapshots with the change rather than appending them to these docs.

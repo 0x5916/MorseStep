@@ -71,22 +71,24 @@ value_of() { env_get "$1" || true; }
 # size. Used to compare two sizes, which is how the db service's shared memory is checked
 # against its memory limit below.
 bytes_of() {
-  local value digits unit
-  value="${1,,}"
+  local value digits unit multiplier=1
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   [[ -n ${value} ]] || return 0
   [[ ${value} =~ ^([0-9]+)([bkmgtp]|([bkmgtp])b)?$ ]] || return 0
   digits="${BASH_REMATCH[1]}"
   unit="${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}"
-  # Bash wraps silently past 64 bits; refuse anything that long instead of comparing it.
+  while [[ ${#digits} -gt 1 && ${digits} == 0* ]]; do digits="${digits#0}"; done
+  # Refuse overflow before multiplication; a valid-looking size must not wrap.
   (( ${#digits} <= 18 )) || return 0
   case "${unit}" in
-    ''|b) printf '%s' "$(( 10#${digits} ))" ;;
-    k) printf '%s' "$(( 10#${digits} * 1024 ))" ;;
-    m) printf '%s' "$(( 10#${digits} * 1024 * 1024 ))" ;;
-    g) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 ))" ;;
-    t) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 * 1024 ))" ;;
-    p) printf '%s' "$(( 10#${digits} * 1024 * 1024 * 1024 * 1024 * 1024 ))" ;;
+    k) multiplier=1024 ;;
+    m) multiplier=1048576 ;;
+    g) multiplier=1073741824 ;;
+    t) multiplier=1099511627776 ;;
+    p) multiplier=1125899906842624 ;;
   esac
+  (( 10#${digits} <= 9223372036854775807 / multiplier )) || return 0
+  printf '%s' "$(( 10#${digits} * multiplier ))"
 }
 
 for key in "${REQUIRED[@]}"; do
@@ -130,25 +132,29 @@ fi
 for key in POSTGRES_MEMORY_LIMIT POSTGRES_CPU_LIMIT POSTGRES_SHM_SIZE; do
   value="$(value_of "${key}")"
   [[ -n ${value} ]] || continue
-  value_lc="${value,,}"
+  value_lc="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
   if [[ ${key} == POSTGRES_CPU_LIMIT ]]; then
-    [[ ${value_lc} =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+    if [[ ! ${value_lc} =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+        ! parse_nonnegative_integer "${value_lc%%.*}" POSTGRES_CPU_LIMIT >/dev/null 2>&1; then
       problems+=("${key} must be a CPU count such as 2 or 1.5 (0 means no limit)")
+    fi
   else
-    [[ ${value_lc} =~ ^[0-9]+([bkmgtp]|[bkmgtp]b)?$ ]] ||
+    [[ -n "$(bytes_of "${value_lc}")" ]] ||
       problems+=("${key} must be a byte size such as 512mb or 2g (0 means no limit)")
   fi
 done
 
 max_conns="$(value_of POSTGRES_MAX_CONNECTIONS)"
-if [[ -n ${max_conns} && ! ${max_conns} =~ ^[0-9]+$ ]]; then
-  problems+=("POSTGRES_MAX_CONNECTIONS must be a whole number (it is a postgresql.conf setting, not a size)")
+max_conns_decimal=''
+if [[ -n ${max_conns} ]] && ! max_conns_decimal="$(parse_nonnegative_integer "${max_conns}" POSTGRES_MAX_CONNECTIONS 2>/dev/null)"; then
+  problems+=("POSTGRES_MAX_CONNECTIONS must be a whole number no larger than 999999999")
 fi
 
 mem_share="$(value_of POSTGRES_HOST_MEMORY_SHARE)"
-if [[ -n ${mem_share} && ! ${mem_share} =~ ^[0-9]+$ ]]; then
+mem_share_decimal=''
+if [[ -n ${mem_share} ]] && ! mem_share_decimal="$(parse_nonnegative_integer "${mem_share}" POSTGRES_HOST_MEMORY_SHARE 2>/dev/null)"; then
   problems+=("POSTGRES_HOST_MEMORY_SHARE must be a whole percentage between 1 and 100")
-elif [[ -n ${mem_share} ]] && (( 10#${mem_share} < 1 || 10#${mem_share} > 100 )); then
+elif [[ -n ${mem_share_decimal} ]] && (( mem_share_decimal < 1 || mem_share_decimal > 100 )); then
   problems+=("POSTGRES_HOST_MEMORY_SHARE is ${mem_share}, which is outside 1..100")
 fi
 
@@ -180,6 +186,9 @@ fi
 # start-up error. Verified on Docker 26 and Docker 29: such a container does start.
 shm_bytes="$(bytes_of "$(value_of POSTGRES_SHM_SIZE)")"
 mem_bytes="$(bytes_of "$(value_of POSTGRES_MEMORY_LIMIT)")"
+if [[ -n ${mem_bytes} && ${tune_disable} != 1 && ${tune_disable} != true ]] && (( mem_bytes > 0 && mem_bytes < 536870912 )); then
+  problems+=("POSTGRES_MEMORY_LIMIT must be at least 512 MiB for automatic tuning")
+fi
 if [[ -n ${shm_bytes} && -n ${mem_bytes} ]] && (( mem_bytes > 0 && shm_bytes > mem_bytes )); then
   printf -v msg \
     'POSTGRES_SHM_SIZE (%s) is larger than POSTGRES_MEMORY_LIMIT (%s). /dev/shm is counted\nagainst the container memory limit, so the database can be killed out of memory under\nparallel queries. Keep POSTGRES_SHM_SIZE at or below the memory limit.' \
@@ -189,10 +198,11 @@ fi
 
 # The server caps total connections; the backend pool is one client of it. A pool larger
 # than the ceiling shows up later as "too many clients already" under load.
-if [[ ${max_conns} =~ ^[0-9]+$ ]]; then
+if [[ -n ${max_conns_decimal} ]]; then
   pool_conns="$(value_of DB_MAX_OPEN_CONNS)"
   pool_conns="${pool_conns:-25}"
-  if [[ ${pool_conns} =~ ^[0-9]+$ ]] && (( 10#${max_conns} < 10#${pool_conns} )); then
+  pool_conns_decimal="$(parse_nonnegative_integer "${pool_conns}" DB_MAX_OPEN_CONNS 2>/dev/null || true)"
+  if [[ -n ${pool_conns_decimal} ]] && (( max_conns_decimal < pool_conns_decimal )); then
     warnings+=("POSTGRES_MAX_CONNECTIONS (${max_conns}) is below DB_MAX_OPEN_CONNS (${pool_conns}); the backend pool alone could exhaust the server's connections")
   fi
 fi

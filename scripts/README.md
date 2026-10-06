@@ -1,274 +1,81 @@
 # Operational scripts
 
-A guided tour of the scripts in this directory. They wrap `docker compose` with the validation,
-backups, and health checks that a manual `git pull && docker compose up -d --build` leaves out.
+The root [Makefile](../Makefile) delegates deployment tasks to these Bash scripts. Run them on the Linux deployment host with Bash 4 or newer, Docker Compose v2, Git, gzip, GNU utilities, and curl or wget. The pgAdmin renderer uses Python already included in its image. OpenSSL supports initial JWT generation. The scripts resolve repository paths from their own location and always operate on the root stack.
 
-The scripts are the source of truth; the root `Makefile` only forwards to them, so `make` is never
-the only way to do something.
-
-- Read-only: [`check-env.sh`](#check-envsh), [`status.sh`](#statussh)
-- Changes your running stack: [`deploy.sh`](#deploysh), [`update.sh`](#updatesh),
-  [`restore.sh`](#restoresh)
-- Writes files, leaves the stack alone: [`backup.sh`](#backupsh)
-
-If you only read one section, read [Safety model](#safety-model), then
-[Troubleshooting](#troubleshooting).
-
-## Requirements
-
-- Linux with **bash 4 or newer** (macOS ships bash 3.2; the scripts refuse to start with a clear
-  message rather than misbehaving).
-- Docker Engine with the **Compose v2 plugin** (`docker compose version`).
-- `curl` (or `wget`) for the health probes, and `openssl` if you want `deploy.sh` to generate a
-  JWT secret for you. `make` is optional.
-
-Run the scripts from anywhere inside the checkout: each one resolves the repository root from its
-own path.
-
-## Quick start
-
-```bash
-cp example.env .env      # deploy.sh offers to do this for you
-nano .env                # fill in the required values
-make deploy              # or scripts/deploy.sh
-
-make status              # confirm everything is healthy
-make backup              # take a first backup
-```
-
-`make` on its own prints every target.
-
-## Everyday tasks
-
-### Check the configuration
-
-```bash
-make check
-```
-
-Reports **every** problem in `.env` in one pass, then lists warnings for things that work but are
-likely to bite later (empty tunnel token, weak passwords, an unset `POSTGRES_DATA_PATH`, a
-`POSTGRES_SHM_SIZE` larger than `POSTGRES_MEMORY_LIMIT`). It also checks the shape of the optional
-PostgreSQL tuning values — see [db/README.md](../db/README.md). Exits `0` when only warnings are
-found, `1` when something must be fixed.
-
-### Update the deployment
-
-```bash
-make update                    # backup, pull, rebuild, verify
-make update DRY_RUN=1          # show what it would do, change nothing
-make update REF=v1.2.0         # move to a tag, branch or commit
-make update NO_BACKUP=1        # skip the pre-update backup
-```
-
-The sequence is: refuse on a dirty working tree, tag the running images
-`<image>:pre-<UTC timestamp>`, back up the database, fetch and fast-forward the current branch,
-rebuild, then wait for `db`, `backend`, `frontend` and pgAdmin to answer. On failure it prints exact
-rollback commands.
-
-### Back up
-
-```bash
-make backup                    # newest 14 dumps are kept
-make backup KEEP=30            # keep 30
-scripts/backup.sh --dir /mnt/backups --keep 0   # write elsewhere, no rotation
-```
-
-### Restore
-
-```bash
-make restore                                          # newest dump in backups/
-make restore FILE=backups/opencw_20260928T101500Z.sql.gz
-```
-
-Takes a fresh backup first, then asks you to type the database name before it drops anything. Add
-`--append` to load on top of the existing schema instead of replacing it. You will be asked to
-restart the backend afterwards so it reconnects with a clean pool.
-
-### Check health
-
-```bash
-make status
-scripts/status.sh --skip-disk    # faster, when you only care about services
-```
-
-### Run as a cron job
-
-`backup.sh` and `status.sh` are designed for unattended use. Point cron at the absolute path of your
-checkout — the scripts find the repository root themselves, so no `cd` is needed, and `docker` and
-`openssl` are already on cron's default `PATH`.
-
-```cron
-# Nightly logical backup at 03:15
-15 3 * * * /path/to/opencw/scripts/backup.sh >> /var/log/opencw-backup.log 2>&1
-
-# Every 5 minutes, alert when something is unhealthy (status.sh exits non-zero)
-*/5 * * * * /path/to/opencw/scripts/status.sh --skip-disk >/dev/null 2>&1 || /usr/local/bin/notify
-```
-
-## Safety model
-
-Every guard exists because of a specific accident it prevents.
-
-| Guard | Accident it prevents |
-|-------|----------------------|
-| `update.sh` refuses a dirty working tree | Rebuilding from half-committed code, or losing uncommitted edits to a checkout |
-| `update.sh` tags images `:pre-<timestamp>` | Having no image to fall back to after a bad release |
-| `update.sh` backs up before changing anything | A migration that cannot be reversed (see [Design notes](#design-notes)) |
-| `restore.sh` backs up before restoring | Losing the current data by restoring the wrong file |
-| `restore.sh` requires the database name to be typed | Wiping a production database with a stray Enter key |
-| `restore.sh` runs `psql --single-transaction` | A failed restore leaving a half-loaded database |
-| `backup.sh` dumps to a `.partial` file, then verifies with `gzip -t` | A truncated `pg_dump` being archived as a usable backup |
-| Globals dumps live in `backups/globals/` | A roles/grants dump being mistaken for a restorable database dump |
-| `check-env.sh` validates before building | A 4-minute image build ending in an unrelated startup crash |
+[DEPLOYMENT.md](../DEPLOYMENT.md) owns installation, public access, credentials, and recovery. [example.env](../example.env) owns Compose configuration defaults; [db/README.md](../db/README.md) owns database tuning.
 
 ## Script reference
 
-All scripts accept `-h`/`--help`. Unless stated otherwise, a failure means exit code `1`; success is
-`0`.
+Every operational Bash script accepts `--help`. Options below supplement that help. Use `--dry-run` to inspect mutations before a deployment operation; read-only scripts reject it.
 
-### `check-env.sh`
+| Script and Make target        | Options                                                                                                                         | Behavior                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `check-env.sh` / `make check` | `--quiet`, `--env-file PATH`                                                                                                    | Validates required values, formats, and optional tuning values; reports all errors; no mutations                                |
+| `deploy.sh` / `make deploy`   | `--timeout SECONDS`, `--dry-run`, `--yes`                                                                                       | Bootstraps `.env`, optionally generates JWT secret, validates, builds/starts, verifies health                                   |
+| `update.sh` / `make update`   | `--ref REF`, `--no-backup`, `--auto-rollback`, `--timeout SECONDS`, `--keep N`, `--dry-run`, `--yes`                            | Snapshots locally built images and database, changes revision, rebuilds, verifies; prints or performs image rollback on failure |
+| `backup.sh` / `make backup`   | `--keep N`, `--dir PATH`, `--no-globals`, `--print-path`, `--dry-run`                                                           | Writes verified gzip plain-SQL dump and optional globals dump; rotates retained dumps; never prompts                            |
+| `restore.sh` / `make restore` | Positional file or `--file PATH`, `--globals PATH`, `--no-globals`, `--append`, `--no-backup`, `--keep N`, `--dry-run`, `--yes` | Defaults to newest dump and replaces live database; accepts `.sql` and `.sql.gz`                                                |
+| `status.sh` / `make status`   | `--skip-disk`                                                                                                                   | Reads environment, containers, endpoints, database readiness, release record, images, backups, and disk                         |
 
-Validates root `.env` against the requirements in [DEPLOYMENT.md](../DEPLOYMENT.md), plus the shape
-of the optional `POSTGRES_*` tuning values documented in [db/README.md](../db/README.md).
+Timeout defaults to 240 seconds per service; retention defaults to 14 dumps. `--keep 0` disables pruning. Positive retention removes data dumps together with their companion globals; pinned recovery dumps can temporarily exceed the limit. Numeric options accept leading zeros as decimal and reject overflow. `backup.sh` rejects `--yes`; `check-env.sh` and `status.sh` reject both `--yes` and `--dry-run`. Make forwards its defined variables; use the script directly for options such as `--auto-rollback` that Make does not expose.
 
-| Option | Meaning |
-|--------|---------|
-| `--quiet` | Print nothing when the file is valid (used by `status.sh`) |
-| `--env-file PATH` | Validate `PATH` instead of `.env` |
+```bash
+make check
+make update DRY_RUN=1
+scripts/update.sh --ref RELEASE --auto-rollback
+scripts/backup.sh --dir /mnt/backups --keep 30
+scripts/restore.sh --file backups/opencw_TIMESTAMP.sql.gz
+scripts/status.sh --skip-disk
+```
 
-Read-only. Accepts no `--dry-run` or `--yes`.
+The shared [pgAdmin renderer](render-pgadmin.py) runs inside `pgadmin-config` in both stacks. It uses the image's Python runtime to publish valid JSON and a private per-login passfile; no host Python installation is required for deployment.
 
-### `deploy.sh`
+## Safety and exit behavior
 
-First-time install: bootstraps `.env` from `example.env`, offers to fill an empty `JWT_SECRET`, runs
-`check-env.sh`, builds, starts, and waits for every service.
+The environment parser reads values without sourcing shell code. Dry-run prints mutating commands; read-only validation and prerequisites can still fail. Deploy/update refuse success if database/backend/frontend/pgAdmin container checks or backend/frontend HTTP probes fail; pgAdmin HTTP failure warns. Status additionally fails for a missing/unhealthy pgAdmin container or invalid environment. Cloudflared issues and old/missing backups warn without changing its exit status. Success exits 0; validation or operational failure exits nonzero.
 
-| Option | Meaning |
-|--------|---------|
-| `--timeout SECONDS` | Per-service wait budget (default `240`) |
-| `--dry-run` | Print the commands and the health checks, change nothing |
-| `--yes` | Do not prompt for the `.env` copy or the JWT secret |
+Update refuses a dirty tracked working tree, requires an upstream for the current branch unless `--ref` is given, and aborts if its pre-update backup fails. It records the previous revision/branch and tags locally built images. An explicit branch ref fast-forwards to its fetched upstream (or `origin/BRANCH`); divergent history is rejected. Tags and commits use detached HEAD. Automatic rollback aborts failed image retags, verifies running image IDs and health, and leaves detached HEAD; it does not reverse GORM startup migrations. Restore the pre-update database dump when schema recovery is needed. Avoid `--no-backup` unless the loss of that safeguard is deliberate.
 
-### `update.sh`
+Restore normally requires typing the target database name; `--yes` or `ASSUME_YES=1` bypasses prompts. It stages and decompresses both inputs before confirmation, confirms the running container's database name, and takes a pinned recovery backup before database recreation. Pruning runs after successful verification. On failure the pin protects recovery from scheduled retention; remove the reported `.restore-pin` marker only after recovery. The data load into the recreated database uses `ON_ERROR_STOP` and one transaction, but the old database has already been dropped. `--append` writes into the live schema without one transaction and can leave partial changes on failure. Globals run before database recreation with `ON_ERROR_STOP`; only duplicate `CREATE ROLE` errors are ignored. Other globals errors stop the restore before the database is dropped. Restart the backend after restoring. Use a separate scratch database to rehearse recovery.
 
-Moves the checkout to a new revision and verifies the result.
+Backups use credentials inside the database container, serialize publication/retention with `.backup.lock`, stage privately, validate nonempty SQL and gzip, and atomically publish complete files. Concurrent jobs fail clearly rather than overwrite another dump. Failed staging files are cleaned; after an interrupted process, confirm no backup is running before removing a stale lock. `--print-path` puts only the new dump path on stdout and logs on stderr. Dumps made in pgAdmin custom format are outside this script format and require `pg_restore`.
 
-| Option | Meaning |
-|--------|---------|
-| `--ref REF` | Branch, tag or commit to check out (default: fast-forward the current branch) |
-| `--no-backup` | Skip the pre-update database backup |
-| `--auto-rollback` | Restore the previous images automatically when verification fails |
-| `--timeout SECONDS` | Per-service wait budget (default `240`) |
-| `--keep N` | Retention for the pre-update backup (default `14`) |
-| `--dry-run`, `--yes` | As above |
+## Files and environment overrides
 
-Requires the current branch to have an upstream, or an explicit `--ref`.
+| Path or variable                  | Meaning                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `backups/opencw_TIMESTAMP.sql.gz` | Data dump; collision suffixes preserve runs in the same second                          |
+| `backups/globals/`                | Companion globals dumps                                                                 |
+| `.deploy-state`                   | Last update revision, branch, backup, and image snapshots                               |
+| `BACKUP_DIR`                      | Backup lookup/output directory; default root `backups/`                                 |
+| `BACKUP_RETENTION`                | Retention default for backup and pre-update/pre-restore dumps                           |
+| `STATE_FILE`                      | Override release-record path                                                            |
+| `ENV_FILE`                        | Override parsing/validation/bootstrap and Compose environment file; default root `.env` |
+| `API_PORT`, `FRONTEND_PORT`       | Host probe ports; Compose bindings remain fixed unless separately changed               |
+| `PGADMIN_PORT`                    | Probe port: process environment, then parsed environment file, then 5050                |
+| `DRY_RUN=1`, `ASSUME_YES=1`       | Environment equivalents for scripts that support the corresponding operation            |
 
-### `backup.sh`
+These overrides are process environment variables. The wrapper passes `ENV_FILE` to Compose with `--env-file`; exported Compose values take precedence over the file. Parsing handles quoted values, whitespace, inline comments, and CRLF without executing shell code. Dollar-containing unquoted/double-quoted values are resolved by Compose's read-only `config --environment` command; single-quoted values stay literal. `check-env.sh --env-file PATH` is a validation-only override.
 
-Writes `backups/opencw_<UTC>.sql.gz` and, unless `--no-globals`, a companion
-`backups/globals/opencw_<UTC>.globals.sql.gz` holding roles and grants.
+## Scheduled runs
 
-| Option | Meaning |
-|--------|---------|
-| `--keep N` | Keep the newest `N` dumps (default `14`, or `$BACKUP_RETENTION`) |
-| `--dir PATH` | Write to `PATH` instead of `backups/` (or `$BACKUP_DIR`) |
-| `--no-globals` | Skip the `pg_dumpall --globals-only` companion dump |
-| `--print-path` | Print only the new dump's path on stdout — for scripting |
-| `--dry-run` | As above |
+Configure the deployment host's cron PATH so Bash, Docker, gzip, and HTTP probe tools are available. For a checkout at `/opt/opencw`, example entries are:
 
-Never prompts, so it has no `--yes`.
+```cron
+15 3 * * * /opt/opencw/scripts/backup.sh --dir /mnt/backups >> /var/log/opencw-backup.log 2>&1
+*/5 * * * * /opt/opencw/scripts/status.sh --skip-disk >> /var/log/opencw-status.log 2>&1
+```
 
-### `restore.sh`
-
-Replaces the database contents with a backup.
-
-| Option | Meaning |
-|--------|---------|
-| `FILE` / `--file PATH` | Dump to restore; defaults to the newest in `backups/`. Accepts `.sql.gz` or `.sql` |
-| `--append` | Apply the dump on top of the existing schema instead of dropping and recreating the database |
-| `--globals PATH` | Restore roles/grants from a specific globals dump |
-| `--no-globals` | Do not look for a companion globals dump |
-| `--no-backup` | Skip the automatic pre-restore backup (not recommended) |
-| `--keep N` | Retention for that pre-restore backup (default `14`) |
-| `--dry-run`, `--yes` | As above |
-
-Default behaviour is **destructive**: `dropdb --if-exists --force` then `createdb`, so expect a few
-seconds of downtime and dropped connections.
-
-### `status.sh`
-
-Prints environment validation, `docker compose ps`, per-service state, HTTP probes, the git
-revision, the last recorded release, image list, backup inventory, and disk usage.
-
-| Option | Meaning |
-|--------|---------|
-| `--skip-disk` | Omit the slower disk and Docker storage sections |
-
-Exits `1` when `.env` is invalid, when `db`, `backend`, `frontend` or `pgadmin` is not running and
-healthy, or when the database refuses connections. Read-only, and it deliberately rejects
-`--dry-run` — suppressing the `docker` calls would make a healthy stack look like it was never
-created.
-
-## Files these scripts create
-
-| Path | Written by | Contents |
-|------|-----------|----------|
-| `backups/opencw_<UTC>.sql.gz` | `backup.sh` | Migration-safe plain-SQL dump, restorable with the command in DEPLOYMENT.md §6 |
-| `backups/globals/opencw_<UTC>.globals.sql.gz` | `backup.sh` | `pg_dumpall --globals-only`: roles and grants |
-| `.deploy-state` | `update.sh` | Last release: `UPDATED_AT`, `NEW_REF`, `PREV_REF`, `PREV_BRANCH`, `PREV_BACKUP`, `SNAPSHOTS` |
-
-`backups/` and `.deploy-state` are git-ignored. Image snapshots are tagged
-`<image>:pre-<UTC timestamp>` and cover only the images Compose builds here (backend and
-frontend) — pulled images such as `postgres` or `pgadmin4` are not retagged, because an update
-does not replace them. Snapshots are never deleted automatically; review them with
-`docker images | grep pre-` and remove what you no longer need.
-
-Because dump names have one-second resolution, two backups inside the same second would
-collide; the second one is written as `opencw_<UTC>-2.sql.gz` instead of overwriting the first.
-
-## Environment overrides
-
-| Variable | Used by | Effect |
-|----------|---------|--------|
-| `BACKUP_RETENTION` | `backup.sh`, `update.sh`, `restore.sh` | Default for `--keep` |
-| `BACKUP_DIR` | `backup.sh`, `restore.sh`, `status.sh` | Default for `--dir` |
-| `ENV_FILE` | all | Path to the environment file (default `.env`) |
-| `PGADMIN_PORT` | `deploy.sh`, `update.sh`, `status.sh` | pgAdmin probe port: environment, then `.env`, then `5050` |
-| `API_PORT`, `FRONTEND_PORT` | `deploy.sh`, `update.sh`, `status.sh` | Probe ports, matching the fixed Compose bindings |
-| `DRY_RUN=1`, `ASSUME_YES=1` | all | Same as `--dry-run` and `--yes` |
+A status job supplies an exit code and log, not a notification service; connect failures to your monitoring. Keep backup storage off the host, rotate cron logs separately, and [rehearse restoration](../DEPLOYMENT.md#backups-and-recovery).
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `requires bash 4 or newer` | macOS, or an old distro | Run it on the Linux host, or install bash 5 |
-| `unknown argument: --yes` | That script has no prompts | Check `--help`; read-only scripts accept neither `--dry-run` nor `--yes` |
-| `the 'db' service is not created` | Stack is not running | `docker compose up -d`, then retry |
-| `POSTGRES_DATA_PATH is unset` warning | `example.env` value not copied | Set it in `.env`, or accept the in-repo `./data/postgres` default |
-| A `POSTGRES_…` problem or warning from `check-env.sh` | A tuning value is not a size or a whole number, or shared memory is larger than the memory limit | See [db/README.md](../db/README.md) |
-| `db` restart-loops with `opencw-pg-tune: ERROR: cannot find docker-entrypoint.sh` | `db/tune.sh` is missing from the checkout, so its bind mount is empty | Restore the file; confirm the `opencw-pg-tune.sh` mount with `docker compose config` |
-| `pgAdmin: no response` but the UI opens in a browser | `PGADMIN_PORT` changed in `.env` | Already handled — the scripts read it from `.env`. Restart nothing; re-run `make status` |
-| `there are uncommitted changes` | Dirty tree, by design | Commit or stash, or use `git -C . stash` first |
-| `timed out ... waiting for backend` | Slow first build, or the backend is crash-looping | `docker compose logs backend`. A container that has restarted twice is reported as crash-looping immediately, and the HTTP probes are skipped, so a bad release fails in seconds rather than waiting out the timeouts |
-| `the pre-update backup failed; aborting` | Database down or disc full | Fix the cause; nothing was changed |
-| `could not snapshot <image>` | Image not built locally yet | Harmless on a first update; the backup is still your safety net |
-| `'main' has no upstream branch` | Branch is not tracking a remote | `git branch --set-upstream-to=origin/main`, or pass `--ref` |
-| `detached HEAD state ... has no upstream to pull` | An earlier rollback detached the checkout | `git checkout main`, then re-run — or jump straight back with `scripts/update.sh --ref main` |
-| pgAdmin rejects the login from `.env` | pgAdmin stores its admin account when its config database is first created, in the `opencw_pgadmin_data` volume, and ignores `PGADMIN_DEFAULT_*` after that. If the volume is older than your last `.env` edit, the password there is not the one in effect | Reset it in place: `docker compose exec pgadmin /venv/bin/python3 /pgadmin4/setup.py update-user "$PGADMIN_DEFAULT_EMAIL" --password '<new>' --role Administrator`. See DEPLOYMENT.md §5 |
+Read `docker compose logs --tail=100 SERVICE` after failed deployment verification. A repeated container restart is detected early; backend failures commonly need the required email/token/database configuration checked. A missing tuner entrypoint needs the complete checkout and correct bind mount. Unexpected database budgets are covered by the [tuning guide](../db/README.md).
 
-## Design notes
+For a missing upstream, configure branch tracking or pass `--ref`. After rollback, return to a branch before ordinary update. pgAdmin's initialized account ignores later edits to `PGADMIN_DEFAULT_*`; reset it through pgAdmin as described in [administration](../DEPLOYMENT.md#pgadmin-administration). Diagnose its web login separately from a failed database connection.
 
-- **`.env` is parsed, never sourced.** It contains values with spaces
-  (`RESEND_FROM_EMAIL=OpenCW <no-reply@example.com>`); sourcing the file would try to execute them.
-- **Credentials stay out of the host shell.** `pg_dump` runs inside the `db` container and reads
-  `$POSTGRES_USER`/`$POSTGRES_DB` from its own environment.
-- **Backups are plain-SQL gzip**, not `--format=custom`, so the restore command already documented
-  in DEPLOYMENT.md §6 keeps working.
-- **Migrations are forward-only.** The backend runs GORM `AutoMigrate` at startup, so rolling the
-  images back does **not** undo schema changes. The pre-update backup is the way back. This is why
-  `update.sh` backs up before it touches anything, and why `--no-backup` is warned about.
-- **stdout is reserved for data.** Informational output goes through a single stream
-  (`LOG_STREAM`), which `backup.sh --print-path` points at stderr so a caller capturing stdout gets
-  only the path.
+## Regression checks
+
+Run `python3 scripts/tests/test-operations.py` from the root. Fixtures copy scripts into temporary directories and stub Docker, Git network operations, and host utilities; they never use the live database or project `.env`. The runner prefers Bash 4 or newer. A macOS Bash 3 compatibility run removes only the version guard in copied scripts and reports the unavailable native Bash 4 gate. Run shell syntax checks separately and rehearse recovery on an isolated Linux stack before production use.
+
+Run `node --test scripts/validate-messages.test.mjs` from `frontend/` for nine catalogue-validation regression cases.

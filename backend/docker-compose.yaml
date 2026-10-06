@@ -48,7 +48,9 @@ services:
     env_file:
       - .env
     environment:
+      PORT: "8080"
       DB_HOST: db
+      DB_PORT: "5432"
     depends_on:
       db:
         condition: service_healthy
@@ -72,49 +74,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-    command:
-      - |
-        set -eu
-
-        if [ -z "$$PGADMIN_DEFAULT_EMAIL" ]; then
-          echo "pgadmin-config: PGADMIN_DEFAULT_EMAIL is not set; fill it in .env (see example.env)." >&2
-          exit 1
-        fi
-
-        if [ -z "$$DB_USER" ] || [ -z "$$DB_NAME" ] || [ -z "$$DB_PASSWORD" ]; then
-          echo "pgadmin-config: database credentials are not set; fill them in .env (see example.env)." >&2
-          exit 1
-        fi
-
-        # pgAdmin keeps a per-login storage directory; @ in the login email becomes _.
-        storage_dir="/var/lib/pgadmin/storage/$$(printf '%s' "$$PGADMIN_DEFAULT_EMAIL" | tr '@' '_')"
-        mkdir -p "$$storage_dir"
-
-        cat > /var/lib/pgadmin/servers.json <<EOF
-        {
-          "Servers": {
-            "1": {
-              "Name": "OpenCW",
-              "Group": "Servers",
-              "Host": "db",
-              "Port": 5432,
-              "Username": "$$DB_USER",
-              "MaintenanceDB": "$$DB_NAME",
-              "ConnectionParameters": {
-                "sslmode": "prefer"
-              }
-            }
-          }
-        }
-        EOF
-
-        # libpq matches .pgpass on host:port:database:username:password, so : and \ must be escaped.
-        printf 'db:5432:%s:%s:%s\n' "$$DB_NAME" "$$DB_USER" "$$(printf '%s' "$$DB_PASSWORD" | sed 's/[\\:]/\\&/g')" > "$$storage_dir/.pgpass"
-        chmod 600 "$$storage_dir/.pgpass"
-
-        echo "pgadmin-config: rendered servers.json and $$storage_dir/.pgpass"
+    command: ["exec /venv/bin/python3 /usr/local/bin/opencw-pgadmin-config.py"]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+      - ../scripts/render-pgadmin.py:/usr/local/bin/opencw-pgadmin-config.py:ro
 
   pgadmin:
     image: dpage/pgadmin4:9.18.0

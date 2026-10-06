@@ -1,132 +1,39 @@
-# OpenCW
+# MorseStep / OpenCW
 
-OpenCW is a full-stack Morse code training platform with:
+MorseStep is a sound-first Morse code trainer with guided Koch lessons, free practice, local progress, optional account sync, and a community forum. The repository and deployed service names still use OpenCW.
 
-- Go backend API (Gin + GORM)
-- SvelteKit frontend
-- PostgreSQL database
-- Docker Compose orchestration
+## Start developing
 
-## Project Structure
+The frontend requires Node 26; the backend requires the Go version declared in [go.mod](backend/go.mod) and PostgreSQL. Run each subsystem from its own directory:
 
-- [backend](backend)
-- [frontend](frontend)
-- [db](db) — PostgreSQL tuning guide for the `db` service
-- [scripts](scripts) — operational scripts
-- [api_test](api_test)
-- [docker-compose.yaml](docker-compose.yaml)
-- [example.env](example.env)
-- [DEPLOYMENT.md](DEPLOYMENT.md)
+```sh
+cd frontend
+npm ci
+cp example.env .env
+npm run dev
+```
 
-## Quick Start (Docker)
+Set `PUBLIC_API_BASE` in the frontend environment to the backend's `/v1` URL. Guided training stores events locally in IndexedDB; account and forum features need the API. Follow the [backend setup](backend/README.md) to start it.
 
-1. Copy environment template:
+## Documentation
 
-   cp example.env .env
+| Guide                                                  | Owns                                                |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| [Frontend](frontend/README.md)                         | Setup, scripts, static build, localization          |
+| [Learning architecture](frontend/docs/learning.md)     | Training, timing, storage, UI acceptance rules      |
+| [UI backlog](frontend/docs/ui-ux-audit.md)             | Source findings and remaining design work           |
+| [Backend](backend/README.md)                           | Local API development and tests                     |
+| [API](backend/API.md)                                  | Registered endpoints and request/response contracts |
+| [V2 training sync](backend/docs/training-events-v2.md) | Batch ingestion, snapshots, idempotency             |
+| [Deployment](DEPLOYMENT.md)                            | Host setup, configuration, exposure, recovery       |
+| [Operational scripts](scripts/README.md)               | Commands, flags, safety behavior                    |
+| [Database tuning](db/README.md)                        | Resource detection and PostgreSQL overrides         |
+| [Agent rules](AGENTS.md)                               | Repository boundaries and verification evidence     |
 
-2. Generate JWT secret:
+For the full stack, configure the root `example.env` as `.env`, then follow the deployment guide. `make` lists operational commands; `make check` validates configuration. Do not substitute the backend development Compose file for the root deployment stack.
 
-   openssl rand -base64 32
+## Architecture and license
 
-3. Put the generated value into .env as JWT_SECRET.
+`frontend/` uses SvelteKit 5, TypeScript, Tailwind CSS v4, Paraglide, and the static adapter. `backend/` uses Go, Gin, and GORM. `db/` supplies PostgreSQL tuning; `scripts/` supplies operational automation. The root `docker-compose.yaml` connects these services, pgAdmin, and Cloudflare Tunnel.
 
-4. Set the pgAdmin login in .env (`PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD`). This
-   login is for the admin UI only; it is not a PostgreSQL role.
-
-5. Start all services:
-
-   docker compose up -d --build
-
-6. Open the app:
-
-   http://localhost:3000
-
-## Services
-
-- Frontend: http://localhost:3000
-- Backend API base: http://localhost:8080/v1
-- Health check: http://localhost:8080/v1/health
-- pgAdmin 4 (database admin UI): http://127.0.0.1:5050
-- PostgreSQL: `localhost:${DB_PORT:-5432}`, sized automatically at start-up — see [DEPLOYMENT.md](DEPLOYMENT.md)
-
-## Common Commands
-
-Day-to-day operations go through the `make` targets, which wrap the scripts in
-[scripts](scripts) with environment validation, backups, and health checks. Run `make` on its own
-for the full list.
-
-| Task | Command |
-|------|---------|
-| Validate `.env` | `make check` |
-| First-time install | `make deploy` |
-| Update to the latest revision | `make update` |
-| Update to a specific ref | `make update REF=v1.2.0` |
-| Preview what an update would do | `make update DRY_RUN=1` |
-| Back up the database | `make backup` |
-| Back up, keeping 30 dumps | `make backup KEEP=30` |
-| Restore a backup | `make restore FILE=backups/opencw_<date>.sql.gz` |
-| Health, versions and disk usage | `make status` |
-
-Each script also runs standalone and documents its own options, for example
-`scripts/restore.sh --help`. See [scripts/README.md](scripts/README.md) for the full guide, including
-the safety model, cron examples and troubleshooting.
-
-The underlying `docker compose` commands still work:
-
-Start / rebuild:
-
-docker compose up -d --build
-
-View logs:
-
-docker compose logs -f
-
-Restart backend only:
-
-docker compose up -d backend
-
-Restart the database admin UI only:
-
-docker compose up -d pgadmin
-
-Stop without removing data:
-
-docker compose down
-
-Remove the pgAdmin volume (the database is a bind mount and is **not** affected — see
-[DEPLOYMENT.md](DEPLOYMENT.md) section 7):
-
-docker compose down -v
-
-## Environment Variables
-
-See [example.env](example.env) for the full list. Required variables:
-
-- POSTGRES_USER
-- POSTGRES_PASSWORD
-- POSTGRES_DB
-- JWT_SECRET (must be base64)
-- RESEND_API_KEY
-- RESEND_FROM_EMAIL
-- CORS_ORIGINS
-- PUBLIC_API_BASE
-- PGADMIN_DEFAULT_EMAIL (pgAdmin login, not a database role)
-- PGADMIN_DEFAULT_PASSWORD
-
-## API Testing
-
-API request collections and environment files are in [api_test](api_test).
-
-## Production Deployment
-
-Use [DEPLOYMENT.md](DEPLOYMENT.md) for production setup, reverse proxy, backup, and update
-procedures. `make deploy` and `make update` automate the first two sections of that document.
-
-pgAdmin is published on `127.0.0.1` only. Public access goes through the Cloudflare tunnel at
-`https://pgadmin.opencw.net`, guarded by a Zero Trust Access policy — see DEPLOYMENT.md.
-
-## Notes
-
-- The frontend uses PUBLIC_API_BASE at build time. If this value changes, rebuild the frontend image.
-- If browser requests are blocked by CORS, ensure CORS_ORIGINS contains the exact frontend origin you open in the browser.
-- PostgreSQL derives its settings at start-up from the memory and CPU the `db` container actually has, via [db/tune.sh](db/tune.sh), instead of using values fixed for one machine size. Give it an explicit budget with `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in `.env`; what it chose is printed in `docker compose logs db`. Full guide: [db/README.md](db/README.md); summary: the resource tuning section of [DEPLOYMENT.md](DEPLOYMENT.md).
+The project uses the [MIT license](LICENSE.md). Bundled agent skills under `.agents/skills/` and generated/dependency documentation are separate from the project guides above.

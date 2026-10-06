@@ -36,6 +36,7 @@ while (( $# )); do
   shift
 done
 
+TIMEOUT="$(parse_nonnegative_integer "${TIMEOUT}" '--timeout')"
 require_docker
 require_compose_file
 
@@ -97,6 +98,7 @@ failed=0
 wait_service_healthy db "${TIMEOUT}" || failed=1
 wait_service_healthy backend "${TIMEOUT}" || failed=1
 wait_service_healthy frontend "${TIMEOUT}" || failed=1
+wait_service_healthy pgadmin "${TIMEOUT}" || failed=1
 # Only probe over HTTP once the containers themselves are up. Probing an endpoint
 # whose container has already failed just burns the full timeout.
 if (( failed )); then

@@ -29,6 +29,42 @@ describe('buildAudioPlan', () => {
     expect(plan.totalDuration).toBeCloseTo(charDot + letterSpace + wordSpace + charDot, 12);
   });
 
+  it('preserves leading, repeated and trailing gaps without trimming unknown characters', () => {
+    const text = ' e\t!e ';
+    const { charDot, letterSpace, wordSpace } = getFarnsworthWpmSet(20, 10);
+    const secondStart = wordSpace + charDot + letterSpace + wordSpace + wordSpace;
+    const duration = secondStart + charDot + letterSpace + wordSpace;
+    const plan = buildAudioPlan(text, { charWpm: 20, effWpm: 10 });
+
+    expect(plan.text).toBe(' E\t!E ');
+    expect(plan.events).toEqual([
+      { start: wordSpace, duration: charDot },
+      { start: secondStart, duration: charDot }
+    ]);
+    expect(plan.totalDuration).toBe(duration);
+    expect(calculateDuration(text, 20, 10)).toBe(duration);
+  });
+
+  it('keeps silence in passages containing only unknown characters', () => {
+    const { wordSpace } = getFarnsworthWpmSet(25, 12);
+    const plan = buildAudioPlan(' \t!', { charWpm: 25, effWpm: 12 });
+    const duration = wordSpace + wordSpace + wordSpace;
+
+    expect(plan.events).toEqual([]);
+    expect(plan.totalDuration).toBe(duration);
+    expect(calculateDuration(' \t!', 25, 12)).toBe(duration);
+  });
+
+  it('keeps a word gap for each unsupported UTF-16 code unit', () => {
+    const { charDot, letterSpace, wordSpace } = getFarnsworthWpmSet(20, 10);
+    const duration = charDot + letterSpace + wordSpace + wordSpace + wordSpace;
+    const plan = buildAudioPlan('E🙂\n', { charWpm: 20, effWpm: 10 });
+
+    expect(plan.events).toEqual([{ start: 0, duration: charDot }]);
+    expect(plan.totalDuration).toBe(duration);
+    expect(calculateDuration('E🙂\n', 20, 10)).toBe(duration);
+  });
+
   it('agrees with calculateDuration for every text shape', () => {
     for (const text of ['', 'E', 'K M', 'KMRU KMRU', 'E E', 'E!E', '5NN']) {
       const plan = buildAudioPlan(text, { charWpm: 20, effWpm: 10 });

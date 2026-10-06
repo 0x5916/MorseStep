@@ -31,13 +31,14 @@ export function getFarnsworthWpmSet(charWpm: number, effWpm: number): Farnsworth
 }
 
 export function calculateDuration(text: string, charWpm: number, effWpm: number): number {
-  const { charDot, dash, symbolSpace, letterSpace, wordSpace } = getFarnsworthWpmSet(
-    charWpm,
-    effWpm
-  );
+  const timings = getFarnsworthWpmSet(charWpm, effWpm);
+  return walkTimeline(text.toUpperCase(), timings);
+}
 
+/** Accumulate timing in playback order, optionally recording the tone schedule. */
+function walkTimeline(upper: string, timings: FarnsworthTimings, events?: ToneEvent[]): number {
+  const { charDot, dash, symbolSpace, letterSpace, wordSpace } = timings;
   let t = 0;
-  const upper = text.toUpperCase();
 
   for (let i = 0; i < upper.length; i++) {
     const ch = upper[i];
@@ -47,8 +48,8 @@ export function calculateDuration(text: string, charWpm: number, effWpm: number)
       continue;
     }
     for (let j = 0; j < morse.length; j++) {
-      const dotOrDash = morse[j];
-      const duration = dotOrDash === '.' ? charDot : dash;
+      const duration = morse[j] === '.' ? charDot : dash;
+      events?.push({ start: t, duration });
       t += duration;
       if (j < morse.length - 1) t += symbolSpace;
     }
@@ -92,37 +93,18 @@ export interface AudioPlanOptions {
  */
 export function buildAudioPlan(text: string, options: AudioPlanOptions): AudioPlan {
   const { charWpm, effWpm, frequency = 600, volume = 1, startDelay = 0 } = options;
-  const { charDot, dash, symbolSpace, letterSpace, wordSpace } = getFarnsworthWpmSet(
-    charWpm,
-    effWpm
-  );
+  const timings = getFarnsworthWpmSet(charWpm, effWpm);
 
   const events: ToneEvent[] = [];
   const upper = text.toUpperCase();
-  let t = 0;
-
-  for (let i = 0; i < upper.length; i++) {
-    const ch = upper[i];
-    const morse = MORSE[ch];
-    if (!morse) {
-      t += wordSpace;
-      continue;
-    }
-    for (let j = 0; j < morse.length; j++) {
-      const duration = morse[j] === '.' ? charDot : dash;
-      events.push({ start: t, duration });
-      t += duration;
-      if (j < morse.length - 1) t += symbolSpace;
-    }
-    if (i < upper.length - 1) t += letterSpace;
-  }
+  const totalDuration = walkTimeline(upper, timings, events);
 
   return {
     text: upper,
     events,
-    totalDuration: t,
+    totalDuration,
     startDelay,
-    fade: Math.min(charDot * 0.1, 0.005),
+    fade: Math.min(timings.charDot * 0.1, 0.005),
     frequency,
     volume
   };

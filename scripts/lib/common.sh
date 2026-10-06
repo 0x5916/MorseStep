@@ -35,6 +35,8 @@ SCRIPTS_DIR="$(cd -- "${COMMON_SH_DIR}/.." && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPTS_DIR}/.." && pwd)"
 
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env}"
+[[ ${ENV_FILE} == /* ]] || ENV_FILE="${PWD}/${ENV_FILE}"
+export ENV_FILE
 EXAMPLE_ENV_FILE="${ROOT_DIR}/example.env"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.yaml"
 BACKUP_DIR="${BACKUP_DIR:-${ROOT_DIR}/backups}"
@@ -72,6 +74,16 @@ ok()     { printf '%s[%s]%s %s\n' "${C_GREEN}" "$(_script_name)" "${C_RESET}" "$
 header() { printf '\n%s%s%s\n' "${C_BLUE}" "$*" "${C_RESET}" >&"${LOG_STREAM}"; }
 warn()   { printf '%s[%s] warning:%s %s\n' "${C_YELLOW}" "$(_script_name)" "${C_RESET}" "$*" >&2; }
 die()    { printf '%s[%s] error:%s %s\n' "${C_RED}" "$(_script_name)" "${C_RESET}" "$*" >&2; exit 1; }
+
+# Canonical decimal arithmetic, including inputs such as 08. Bound option
+# values before Bash arithmetic can overflow or interpret them as octal.
+parse_nonnegative_integer() {
+  local value="$1" label="$2"
+  [[ ${value} =~ ^[0-9]+$ ]] || die "${label} must be a nonnegative whole number"
+  while [[ ${#value} -gt 1 && ${value} == 0* ]]; do value="${value#0}"; done
+  (( ${#value} <= 9 )) || die "${label} is too large (maximum 999999999)"
+  printf '%s' "${value}"
+}
 
 # --- help -------------------------------------------------------------------
 
@@ -190,14 +202,15 @@ require_git_checkout() {
 
 # Run docker compose against the root stack. The subshell `cd` keeps the
 # directory-derived project name stable ("opencw") no matter where the caller
-# was invoked from, and makes Compose read the root .env for interpolation.
+# was invoked from. Use the same environment file the scripts validate.
 compose() {
   if [[ ${DRY_RUN} == 1 ]]; then
-    printf '%s[dry-run]%s (cd %s && docker compose -f %s %s)\n' \
-      "${C_DIM}" "${C_RESET}" "${ROOT_DIR}" "${COMPOSE_FILE}" "$(_quote_cmd "$@")" >&"${LOG_STREAM}"
+    printf '%s[dry-run]%s (cd %s && %s)\n' \
+      "${C_DIM}" "${C_RESET}" "$(_quote_cmd "${ROOT_DIR}")" \
+      "$(_quote_cmd docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@")" >&"${LOG_STREAM}"
     return 0
   fi
-  ( cd -- "${ROOT_DIR}" && docker compose -f "${COMPOSE_FILE}" "$@" )
+  ( cd -- "${ROOT_DIR}" && docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@" )
 }
 
 # Image references the Compose configuration resolves, one per line. This
@@ -223,21 +236,50 @@ git_in_root() { ( cd -- "${ROOT_DIR}" && git "$@" ); }
 # --- .env access ------------------------------------------------------------
 
 # Read a value from ${ENV_FILE} without executing the file. Handles an optional
-# `export ` prefix, one layer of surrounding quotes, CRLF endings and (like
-# Compose) lets the last definition win. Returns non-zero when the key is
+# `export ` prefix, quoted values, inline comments, CRLF endings and (like
+# Compose) lets process values override the last file definition. Returns non-zero when the key is
 # absent; an empty value (`KEY=`) is returned as an empty string.
 env_get() {
-  local key="$1" pattern value
+  local key="$1" value mode
+  [[ ${key} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  if declare -p "${key}" >/dev/null 2>&1; then printf '%s' "${!key}"; return 0; fi
   [[ -f ${ENV_FILE} ]] || return 1
-  pattern="^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*="
-  grep -qE -- "${pattern}" "${ENV_FILE}" 2>/dev/null || return 1
-  value="$(sed -n -E -e 's/\r$//' -e "s/${pattern}//p" "${ENV_FILE}" | tail -n 1)"
-  if (( ${#value} >= 2 )); then
-    if [[ ${value} == \"*\" && ${value} == *\" ]]; then
-      value="${value:1:${#value}-2}"
-    elif [[ ${value} == \'*\' && ${value} == *\' ]]; then
-      value="${value:1:${#value}-2}"
-    fi
+  value="$(awk -v key="${key}" '
+    { sub(/\r$/, "") }
+    $0 ~ "^[[:space:]]*(export[[:space:]]+)?" key "[[:space:]]*=" {
+      found = 1; value = $0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      quote = substr(value, 1, 1); decoded = ""
+      if (quote == "\047" || quote == "\042") {
+        for (i = 2; i <= length(value); i++) {
+          c = substr(value, i, 1)
+          if (c == quote) break
+          if (c == "\\" && i < length(value)) {
+            nextc = substr(value, i + 1, 1)
+            if (nextc == quote || (quote == "\042" && nextc == "\\")) { c = nextc; i++ }
+            else if (quote == "\042" && nextc ~ /^[nrt]$/) {
+              c = nextc == "n" ? "\n" : (nextc == "r" ? "\r" : "\t"); i++
+            }
+          }
+          decoded = decoded c
+        }
+        value = decoded
+      } else {
+        sub(/[[:space:]]+#.*$/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+      }
+    }
+    END { if (!found) exit 1; printf "%s\n%s", (quote == "\047" ? "literal" : "expand"), value }
+  ' "${ENV_FILE}")" || return 1
+  mode="${value%%$'\n'*}"; value="${value#*$'\n'}"
+  if [[ ${mode} == expand && ${value} == *'$'* ]]; then
+    # Reuse Compose for its parameter/default expansion rather than evaluate
+    # shell code or maintain a second interpolation implementation. No daemon
+    # is needed for config; never log the resolved environment (it has secrets).
+    command -v docker >/dev/null 2>&1 || { warn "resolving ${key} interpolation requires Docker Compose"; return 1; }
+    value="$(cd -- "${ROOT_DIR}" && docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config --environment 2>/dev/null)" ||
+      { warn "cannot resolve ${key} with Docker Compose"; return 1; }
+    value="$(printf '%s\n' "${value}" | awk -v key="${key}" 'index($0, key "=") == 1 { found = 1; value = substr($0, length(key) + 2) } END { if (!found) exit 1; printf "%s", value }')" || return 1
   fi
   printf '%s' "${value}"
 }
@@ -333,7 +375,7 @@ http_ok() {
   if command -v curl >/dev/null 2>&1; then
     curl -fs -o /dev/null --max-time "${timeout}" "${url}" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -o /dev/null --timeout="${timeout}" "${url}" 2>/dev/null
+    wget -q -O /dev/null --tries=1 --timeout="${timeout}" "${url}" 2>/dev/null
   else
     die "need curl or wget to probe ${url}"
   fi
@@ -354,14 +396,15 @@ container_state() {
     return 0
   fi
   state="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || printf 'unknown')"
-  health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "${cid}" 2>/dev/null || printf '-')"
+  health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "${cid}" 2>/dev/null || printf 'unknown')"
   printf '%s (health: %s)\n' "${state}" "${health}"
 }
 
 # wait_service_healthy <service> [timeout] - wait for running + healthy (a
 # service without a healthcheck counts as healthy once it is running).
 wait_service_healthy() {
-  local service="$1" timeout="${2:-180}" start now cid state health
+  local service="$1" timeout start now cid state health restarts initial_restarts='' observed_cid=''
+  timeout="$(parse_nonnegative_integer "${2:-180}" timeout)" || return 1
   if [[ ${DRY_RUN} == 1 ]]; then
     printf '%s[dry-run]%s wait for service %s to become healthy\n' "${C_DIM}" "${C_RESET}" "${service}" >&"${LOG_STREAM}"
     return 0
@@ -372,15 +415,6 @@ wait_service_healthy() {
     if [[ -n ${cid} ]]; then
       state="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || true)"
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}" 2>/dev/null || true)"
-      # A restart loop is a definite failure, so report it in seconds instead of
-      # burning the whole timeout (a bad JWT_SECRET or database URL crash-loops
-      # the backend, and waiting out 240s twice per service is painful).
-      local restarts
-      restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || printf 0)"
-      if (( restarts >= 2 )); then
-        warn "${service} is crash-looping (${restarts} restarts); see: docker compose logs ${service}"
-        return 1
-      fi
       case ${state} in
         running)
           case ${health} in
@@ -399,6 +433,16 @@ wait_service_healthy() {
           return 1
           ;;
       esac
+      # Historical restarts do not invalidate a currently healthy container.
+      restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || true)"
+      if [[ ${restarts} =~ ^[0-9]+$ ]]; then
+        if [[ ${cid} != "${observed_cid}" ]]; then
+          observed_cid="${cid}"; initial_restarts="${restarts}"
+        elif (( restarts - initial_restarts >= 2 )); then
+          warn "${service} is crash-looping (two restarts during this check); see: docker compose logs ${service}"
+          return 1
+        fi
+      fi
     fi
     now="$(date +%s)"
     if (( now - start >= timeout )); then
@@ -411,7 +455,8 @@ wait_service_healthy() {
 
 # wait_http <name> <url> [timeout] - poll an endpoint until it answers.
 wait_http() {
-  local name="$1" url="$2" timeout="${3:-180}" start now
+  local name="$1" url="$2" timeout start now
+  timeout="$(parse_nonnegative_integer "${3:-180}" timeout)" || return 1
   if [[ ${DRY_RUN} == 1 ]]; then
     printf '%s[dry-run]%s wait for %s at %s\n' "${C_DIM}" "${C_RESET}" "${name}" "${url}" >&"${LOG_STREAM}"
     return 0
@@ -449,7 +494,7 @@ companion_globals_for() {
   name="$(basename -- "${dump}")"
   name="${name%.gz}"
   name="${name%.sql}"
-  printf '%s/%s.globals.sql.gz\n' "$(globals_dir)" "${name}"
+  printf '%s/globals/%s.globals.sql.gz\n' "$(dirname -- "${dump}")" "${name}"
 }
 
 # Newest dump first, one absolute path per line. Top level only, and only real
@@ -465,24 +510,24 @@ latest_backup() { list_backups | sed -n '1p'; }
 # prune_backups <keep> - delete all but the newest <keep> dumps. Only files
 # matching opencw_*.sql.gz are considered, so unrelated files are never touched.
 prune_backups() {
-  local keep="$1" file seen=0 pruned=0
+  local keep file globals seen=0 pruned=0 protected=0
+  keep="$(parse_nonnegative_integer "$1" retention)" || return 1
+  if (( keep == 0 )); then log "retention disabled (--keep 0)"; return 0; fi
   while IFS= read -r file; do
     [[ -n ${file} ]] || continue
     seen=$(( seen + 1 ))
     (( seen > keep )) || continue
-    if [[ ${DRY_RUN} == 1 ]]; then
-      printf '%s[dry-run]%s rm -- %s\n' "${C_DIM}" "${C_RESET}" "${file}"
-    else
-      rm -f -- "${file}"
-      log "pruned ${file}"
-    fi
+    if [[ -e ${file}.restore-pin ]]; then protected=$(( protected + 1 )); continue; fi
+    globals="$(companion_globals_for "${file}")"
+    run rm -f -- "${file}" "${globals}"
+    log "pruned ${file} and its companion globals"
     pruned=$(( pruned + 1 ))
   done < <(list_backups)
 
   if (( pruned == 0 )); then
-    log "retention: ${seen} dump(s) kept (limit ${keep}), nothing to prune"
+    log "retention: ${seen} dump(s) kept (limit ${keep}, ${protected} protected beyond limit), nothing to prune"
   else
-    ok "retention: kept the newest ${keep} dump(s), pruned ${pruned}"
+    ok "retention: kept $(( seen - pruned )) dump(s) (limit ${keep}, ${protected} protected beyond limit), pruned ${pruned}"
   fi
 }
 

@@ -23,7 +23,7 @@ usage() {
   print_help \
     "Dump the OpenCW database to ${BACKUP_DIR} and rotate old dumps." \
     "scripts/backup.sh [options]" \
-    "--keep N              keep the newest N dumps (default ${KEEP}, or \$BACKUP_RETENTION)" \
+    "--keep N              keep the newest N dumps; 0 disables pruning (default ${KEEP})" \
     "--dir PATH            write dumps to PATH instead of ${BACKUP_DIR}" \
     "--no-globals          skip the companion pg_dumpall --globals-only dump" \
     "--print-path          print the new dump path on stdout and nothing else"
@@ -53,6 +53,7 @@ while (( $# )); do
   shift
 done
 
+KEEP="$(parse_nonnegative_integer "${KEEP}" 'backup retention')"
 require_docker
 require_compose_file
 
@@ -74,6 +75,25 @@ fi
 
 ensure_backup_dir
 
+lock_dir='' work_dir='' unpublished_globals='' unpublished_pin=''
+cleanup_backup() {
+  [[ -z ${unpublished_pin} ]] || rm -f -- "${unpublished_pin}"
+  [[ -z ${unpublished_globals} ]] || rm -f -- "${unpublished_globals}"
+  [[ -z ${work_dir} ]] || rm -rf -- "${work_dir}"
+  [[ -z ${lock_dir} ]] || rmdir -- "${lock_dir}" 2>/dev/null || true
+  return 0
+}
+trap cleanup_backup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ ${DRY_RUN} == 0 ]]; then
+  umask 077
+  mkdir -- "${BACKUP_DIR}/.backup.lock" 2>/dev/null ||
+    die "backup directory is locked; another backup may be running: ${BACKUP_DIR}/.backup.lock"
+  lock_dir="${BACKUP_DIR}/.backup.lock"
+  work_dir="$(mktemp -d "${BACKUP_DIR}/.backup.XXXXXX")" || die "cannot create backup staging directory"
+fi
+
 stamp="$(now_utc)"
 target="${BACKUP_DIR}/opencw_${stamp}.sql.gz"
 # Timestamps have one-second resolution, so two runs inside the same second would
@@ -85,57 +105,49 @@ if [[ -e ${target} ]]; then
   done
   target="${BACKUP_DIR}/opencw_${stamp}-${n}.sql.gz"
 fi
-partial="${target}.partial"
+partial="${work_dir:-${BACKUP_DIR}/.backup.XXXXXX}/data.sql"
 
-# A failed pg_dump must never leave a file that looks like a usable dump.
-# Returns 0 unconditionally: this runs as an EXIT trap while errexit is active, so
-# a non-zero result here would turn a successful backup into exit status 1 -- which
-# update.sh reads as a failed pre-update backup and aborts the whole update on.
-cleanup_partial() {
-  [[ -f ${partial} ]] || return 0
-  rm -f -- "${partial}"
+# Never publish a name that retention/default restore can discover until the
+# complete, nonempty SQL has been compressed and validated successfully.
+compress_sql() {
+  [[ -s $1 ]] || return 1
+  gzip -c -- "$1" > "$2" || return 1
+  gzip -t -- "$2"
 }
-trap cleanup_partial EXIT
 
 if [[ ${DRY_RUN} == 1 ]]; then
-  dry_pipe "(cd ${ROOT_DIR} && docker compose -f ${COMPOSE_FILE} exec -T db sh -c 'pg_dump -U \"\$POSTGRES_USER\" \"\$POSTGRES_DB\"') > ${partial}"
-  dry_pipe "gzip -c -- ${partial} > ${target} && rm -f -- ${partial}"
-  dry_pipe "gzip -t -- ${target}   # abort if the dump is truncated"
+  dry_pipe "lock ${BACKUP_DIR}/.backup.lock; stage and validate nonempty SQL/gzip before publishing ${target}"
+  dry_pipe "compose exec -T db sh -c 'pg_dump -U \"\$POSTGRES_USER\" \"\$POSTGRES_DB\"' > ${partial}"
   if (( WITH_GLOBALS )); then
-    dry_pipe "mkdir -p -- $(globals_dir)"
-    dry_pipe "(cd ${ROOT_DIR} && docker compose -f ${COMPOSE_FILE} exec -T db sh -c 'pg_dumpall --globals-only -U \"\$POSTGRES_USER\"') > $(companion_globals_for "${target}")"
+    dry_pipe "stage and validate pg_dumpall --globals-only before publishing $(companion_globals_for "${target}")"
   fi
-  dry_pipe "prune ${BACKUP_DIR} down to the newest ${KEEP} dump(s)"
+  prune_backups "${KEEP}"
 else
   info "dumping database to ${target}"
-  # Write to ${partial} first: if pg_dump fails mid-stream, pipefail fails the
-  # pipeline and the trap removes the incomplete file.
-  if ! ( cd -- "${ROOT_DIR}" && docker compose -f "${COMPOSE_FILE}" exec -T db \
-        sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' ) > "${partial}"; then
-    die "pg_dump failed; ${partial} removed. Check 'docker compose logs db'."
+  if ! compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${partial}"; then
+    die "pg_dump failed; no backup published. Check 'docker compose logs db'."
   fi
-  gzip -c -- "${partial}" > "${target}"
-  rm -f -- "${partial}"
-
-  gzip -t -- "${target}" || die "${target} is not valid gzip"
-  size_bytes="$(stat -c %s -- "${target}" 2>/dev/null || printf '0')"
-  (( size_bytes > 0 )) || die "${target} is empty"
+  compress_sql "${partial}" "${work_dir}/data.sql.gz" || die "empty SQL or failed gzip validation; no backup published"
 
   if (( WITH_GLOBALS )); then
     globals="$(companion_globals_for "${target}")"
-    run mkdir -p -- "$(globals_dir)"
-    if ( cd -- "${ROOT_DIR}" && docker compose -f "${COMPOSE_FILE}" exec -T db \
-         sh -c 'pg_dumpall --globals-only -U "$POSTGRES_USER"' ) > "${globals}.partial"; then
-      gzip -c -- "${globals}.partial" > "${globals}"
-      rm -f -- "${globals}.partial"
-      gzip -t -- "${globals}" || warn "globals dump ${globals} is not valid gzip"
+    if compose exec -T db sh -c 'pg_dumpall --globals-only -U "$POSTGRES_USER"' > "${work_dir}/globals.sql" &&
+       compress_sql "${work_dir}/globals.sql" "${work_dir}/globals.sql.gz"; then
+      mkdir -p -- "$(dirname -- "${globals}")"
+      mv -- "${work_dir}/globals.sql.gz" "${globals}"
+      unpublished_globals="${globals}"
       log "wrote ${globals}"
     else
-      rm -f -- "${globals}.partial"
-      warn "pg_dumpall --globals-only failed; continuing without a roles/grants dump"
+      warn "globals dump or validation failed; continuing without a roles/grants dump"
     fi
   fi
 
+  # Protect the returned path even when another dump has a future mtime.
+  unpublished_pin="${target}.restore-pin"
+  : > "${unpublished_pin}"
+  mv -- "${work_dir}/data.sql.gz" "${target}" || die "cannot publish validated backup"
+  [[ ${BACKUP_PIN:-0} != 1 ]] || unpublished_pin=''
+  unpublished_globals=''
   ok "backup written: ${target} ($(human_size "${target}"))"
   prune_backups "${KEEP}"
 fi

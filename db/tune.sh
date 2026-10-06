@@ -30,7 +30,7 @@
 # LXC, a container there reports 31 GiB. The fallback is therefore capped, and warned
 # about, rather than trusted.
 #
-# CPU budget, first source that yields a value wins:
+# CPU budget is the minimum of the applicable ceilings and available CPU count:
 #   1. POSTGRES_CPU_LIMIT
 #   2. cgroup v2 cpu.max
 #   3. cgroup v1 cpu.cfs_quota_us / cpu.cfs_period_us
@@ -79,6 +79,15 @@ first_line() {
   head -n 1 "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true
 }
 
+# POSIX shell arithmetic treats a leading zero as octal. Normalize validated digits
+# before using environment values or cgroup counters in arithmetic expressions.
+decimal_number() {
+  dn_value=$1
+  case ${dn_value} in ''|*[!0-9]*) return 1 ;; esac
+  while [ "${dn_value#0}" != "$dn_value" ]; do dn_value=${dn_value#0}; done
+  printf '%s\n' "${dn_value:-0}"
+}
+
 # Convert a Compose-style byte size ("2g", "512mb", "3000000000") to whole MiB, rounding
 # up so a sub-MiB value never becomes zero. Prints the MiB value; non-zero exit when the
 # input is not a size we understand. This accepts exactly what Compose accepts for
@@ -99,6 +108,16 @@ size_to_mib() {
   case ${stm_num} in
     ''|*[!0-9]*) return 1 ;;
   esac
+  stm_num=$(decimal_number "$stm_num")
+  # Bound the input before multiplication, which can otherwise wrap to a plausible
+  # positive number. The maximum supported budget is 4 TiB.
+  case ${stm_unit} in
+    p) stm_max=0 ;; t) stm_max=4 ;; g) stm_max=4096 ;; m) stm_max=4194304 ;;
+    k) stm_max=4294967296 ;; b) stm_max=4398046511104 ;;
+  esac
+  if [ "${#stm_num}" -gt "${#stm_max}" ] || [ "$stm_num" -gt "$stm_max" ]; then
+    return 1
+  fi
   case ${stm_unit} in
     p) stm_mib=$(( stm_num * 1073741824 )) ;;
     t) stm_mib=$(( stm_num * 1048576 )) ;;
@@ -142,6 +161,9 @@ count_cpuset() {
         cc_hi=${cc_part#*-}
         case ${cc_lo} in ''|*[!0-9]*) continue ;; esac
         case ${cc_hi} in ''|*[!0-9]*) continue ;; esac
+        cc_lo=$(decimal_number "$cc_lo")
+        cc_hi=$(decimal_number "$cc_hi")
+        [ "$cc_hi" -ge "$cc_lo" ] || continue
         cc_total=$(( cc_total + cc_hi - cc_lo + 1 ))
         ;;
       ''|*[!0-9]*) ;;
@@ -220,7 +242,8 @@ detect_memory() {
       dm_share=50
       ;;
   esac
-  if [ "$dm_share" -lt 1 ] || [ "$dm_share" -gt 100 ]; then
+  dm_share=$(decimal_number "$dm_share")
+  if [ "${#dm_share}" -gt 3 ] || [ "$dm_share" -lt 1 ] || [ "$dm_share" -gt 100 ]; then
     warn "POSTGRES_HOST_MEMORY_SHARE=${dm_share} is outside 1..100; using 50"
     dm_share=50
   fi
@@ -229,6 +252,7 @@ detect_memory() {
   case ${dm_total_kb:-} in
     ''|*[!0-9]*) dm_total_kb=0 ;;
   esac
+  dm_total_kb=$(decimal_number "$dm_total_kb")
   if [ "$dm_total_kb" -gt 0 ]; then
     # Multiply before dividing so a small host share does not lose precision.
     dm_guess=$(( dm_total_kb * dm_share / 100 / 1024 ))
@@ -251,6 +275,14 @@ detect_memory() {
   return 1
 }
 
+# Apply the tightest applicable quota, affinity, or explicit ceiling.
+limit_cpu_count() {
+  if [ "$CPU_COUNT" -eq 0 ] || [ "$1" -lt "$CPU_COUNT" ]; then
+    CPU_COUNT=$1
+    CPU_SOURCE=$2
+  fi
+}
+
 # Sets CPU_COUNT and CPU_SOURCE. Always yields at least 1.
 detect_cpus() {
   CPU_COUNT=0
@@ -259,6 +291,10 @@ detect_cpus() {
   dc_limit=${POSTGRES_CPU_LIMIT:-}
   case ${dc_limit} in
     ''|0|0.0|0.00) dc_limit= ;;
+    *[!0-9.]*|*.*.*|.*|*.)
+      warn "POSTGRES_CPU_LIMIT='${dc_limit}' is not a CPU count (use 2 or 1.5); ignoring it"
+      dc_limit=
+      ;;
   esac
   if [ -n "$dc_limit" ]; then
     dc_whole=${dc_limit%%.*}
@@ -270,15 +306,17 @@ detect_cpus() {
     # Note the empty default: "${dc_frac:-0}" would never match the empty branch below,
     # leaving dc_frac unset and making the numeric tests below fail.
     case ${dc_frac:-} in ''|*[!0-9]*) dc_frac=0 ;; esac
-    if [ "$dc_whole" -gt 0 ] || [ "$dc_frac" -gt 0 ]; then
+    dc_whole=$(decimal_number "$dc_whole")
+    dc_frac=$(decimal_number "$dc_frac")
+    if [ "${#dc_whole}" -le 9 ] && { [ "$dc_whole" -gt 0 ] || [ "$dc_frac" != 0 ]; }; then
       CPU_COUNT=$dc_whole
-      if [ "$dc_frac" -gt 0 ]; then
+      if [ "$dc_frac" != 0 ]; then
         CPU_COUNT=$(( CPU_COUNT + 1 ))
       fi
       CPU_SOURCE="POSTGRES_CPU_LIMIT=${dc_limit}"
-      return 0
+    elif [ "$dc_whole" != 0 ] || [ "$dc_frac" != 0 ]; then
+      warn "POSTGRES_CPU_LIMIT='${dc_limit}' is not a CPU count (use 2 or 1.5); ignoring it"
     fi
-    warn "POSTGRES_CPU_LIMIT='${dc_limit}' is not a CPU count (use 2 or 1.5); ignoring it"
   fi
 
   dc_value=$(first_line /sys/fs/cgroup/cpu.max)
@@ -287,10 +325,10 @@ detect_cpus() {
     dc_period=${dc_value#* }
     case ${dc_quota} in ''|*[!0-9]*) dc_quota=0 ;; esac
     case ${dc_period} in ''|*[!0-9]*) dc_period=0 ;; esac
+    dc_quota=$(decimal_number "$dc_quota")
+    dc_period=$(decimal_number "$dc_period")
     if [ "$dc_quota" -gt 0 ] && [ "$dc_period" -gt 0 ]; then
-      CPU_COUNT=$(( (dc_quota + dc_period - 1) / dc_period ))
-      CPU_SOURCE='cgroup v2 cpu.max'
-      return 0
+      limit_cpu_count $(( (dc_quota + dc_period - 1) / dc_period )) 'cgroup v2 cpu.max'
     fi
   fi
 
@@ -298,10 +336,10 @@ detect_cpus() {
   dc_period=$(first_line /sys/fs/cgroup/cpu/cpu.cfs_period_us)
   case ${dc_quota:-} in ''|*[!0-9]*) dc_quota=0 ;; esac
   case ${dc_period:-} in ''|*[!0-9]*) dc_period=0 ;; esac
+  dc_quota=$(decimal_number "$dc_quota")
+  dc_period=$(decimal_number "$dc_period")
   if [ "$dc_quota" -gt 0 ] && [ "$dc_period" -gt 0 ]; then
-    CPU_COUNT=$(( (dc_quota + dc_period - 1) / dc_period ))
-    CPU_SOURCE='cgroup v1 cpu.cfs_quota_us'
-    return 0
+    limit_cpu_count $(( (dc_quota + dc_period - 1) / dc_period )) 'cgroup v1 cpu.cfs_quota_us'
   fi
 
   for dc_file in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus; do
@@ -309,20 +347,18 @@ detect_cpus() {
     if [ -n "$dc_value" ]; then
       dc_count=$(count_cpuset "$dc_value")
       if [ "$dc_count" -gt 0 ]; then
-        CPU_COUNT=$dc_count
-        CPU_SOURCE="$dc_file"
-        return 0
+        limit_cpu_count "$dc_count" "$dc_file"
       fi
     fi
   done
 
   dc_count=$( (command -v nproc >/dev/null 2>&1 && nproc) || getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1' )
   case ${dc_count:-} in ''|*[!0-9]*) dc_count=1 ;; esac
+  dc_count=$(decimal_number "$dc_count")
   if [ "$dc_count" -lt 1 ]; then
     dc_count=1
   fi
-  CPU_COUNT=$dc_count
-  CPU_SOURCE='nproc (no CPU limit detected)'
+  limit_cpu_count "$dc_count" 'nproc (available CPUs)'
   return 0
 }
 
@@ -337,7 +373,10 @@ resolve_max_connections() {
       rm_raw=100
       ;;
   esac
-  MAX_CONNS=$(clamp "$rm_raw" 10 1000)
+  rm_raw=$(decimal_number "$rm_raw")
+  rm_bounded=$rm_raw
+  [ "${#rm_bounded}" -le 4 ] || rm_bounded=1000
+  MAX_CONNS=$(clamp "$rm_bounded" 10 1000)
   if [ "$MAX_CONNS" != "$rm_raw" ]; then
     warn "POSTGRES_MAX_CONNECTIONS=${rm_raw} is outside 10..1000; using ${MAX_CONNS}"
   fi
@@ -345,6 +384,8 @@ resolve_max_connections() {
 
 # Derives every setting and appends the -c arguments to TUNE_ARGS.
 compute_settings() {
+  # The fixed 128 MiB buffer floor needs headroom for other PostgreSQL allocations.
+  [ "$MEM_MIB" -ge 512 ] || die "${MEM_MIB} MiB memory budget is below the supported 512 MiB minimum; increase the container limit or disable automatic tuning"
   SB_MIB=$(clamp $(( MEM_MIB / 4 )) 128 8192)
   ECS_MIB=$(clamp $(( MEM_MIB * 3 / 4 )) "$SB_MIB" 16384)
   MWM_MIB=$(clamp $(( MEM_MIB / 16 )) 64 2048)
@@ -359,10 +400,6 @@ compute_settings() {
   MPMW=$(clamp $(( CPU_COUNT / 2 )) 1 "$MPW")
 
   log "detected ${MEM_MIB} MiB memory (from ${MEM_SOURCE}) and ${CPU_COUNT} CPU(s) (from ${CPU_SOURCE})"
-
-  if [ "$MEM_MIB" -lt 512 ]; then
-    warn "only ${MEM_MIB} MiB of memory is available to this container; the derived settings are at their floors, which suits a test instance but not a production one"
-  fi
 
   add_setting max_connections "$MAX_CONNS"
   show 'max_connections' "${MAX_CONNS} (POSTGRES_MAX_CONNECTIONS, not resource-derived)"

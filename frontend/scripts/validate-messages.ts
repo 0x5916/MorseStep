@@ -12,6 +12,8 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+import { parse } from 'svelte/compiler';
 
 type Catalogue = Record<string, string>;
 
@@ -28,6 +30,7 @@ function readCatalogue(locale: string): Catalogue {
 
 /** The input names a message interpolates, order-independent. */
 function placeholders(value: string): string {
+  if (typeof value !== 'string') return '';
   return [...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)]
     .map((match) => match[1])
     .sort()
@@ -55,10 +58,43 @@ function sourceFiles(dir: string): string[] {
 /** Keys referenced by `m.<key>` in app code. */
 function referencedKeys(): Set<string> {
   const used = new Set<string>();
+  const visitTypescript = (node: ts.Node) => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'm'
+    ) {
+      used.add(node.name.text);
+    }
+    ts.forEachChild(node, visitTypescript);
+  };
+  const visitSvelte = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach(visitSvelte);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const object = record.object as { type?: string; name?: string } | undefined;
+    const property = record.property as { type?: string; name?: string } | undefined;
+    if (
+      record.type === 'MemberExpression' &&
+      !record.computed &&
+      object?.type === 'Identifier' &&
+      object.name === 'm' &&
+      property?.type === 'Identifier' &&
+      property.name
+    ) {
+      used.add(property.name);
+    }
+    Object.values(record).forEach(visitSvelte);
+  };
 
   for (const file of sourceFiles(join(projectDir, 'src'))) {
     const source = readFileSync(file, 'utf8');
-    for (const match of source.matchAll(/\bm\.([a-z][a-z0-9_]*)/g)) used.add(match[1]);
+    // Syntax trees exclude comments, string literals and Svelte text nodes.
+    if (extname(file) === '.svelte') visitSvelte(parse(source, { filename: file, modern: true }));
+    else visitTypescript(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true));
   }
 
   return used;
@@ -70,8 +106,6 @@ const used = referencedKeys();
 const problems: string[] = [];
 
 for (const locale of locales) {
-  if (locale === baseLocale) continue;
-
   const catalogue = readCatalogue(locale);
   const missing: string[] = [];
   const empty: string[] = [];
@@ -83,7 +117,7 @@ for (const locale of locales) {
       missing.push(key);
       continue;
     }
-    if (!catalogue[key].trim()) empty.push(key);
+    if (typeof catalogue[key] !== 'string' || !catalogue[key].trim()) empty.push(key);
     else if (placeholders(catalogue[key]) !== placeholders(base[key])) {
       placeholderDrift.push(key);
     }

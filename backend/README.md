@@ -1,63 +1,34 @@
-# OpenCW Backend
+# MorseStep backend development
 
-This folder's `docker-compose.yaml` and `example.env` are for backend development workflows. For production deployment, use the repository root files.
+The Go API entrypoint is [cmd/api-server/main.go](cmd/api-server/main.go). The local [Compose stack](docker-compose.yaml) and [example.env](example.env) are for development; production uses the [root deployment procedure](../DEPLOYMENT.md). Follow the Go version in [go.mod](go.mod).
 
-## Build production image
+## Local setup
 
-1. Create a runtime env file from the template:
+Run from `backend/`:
 
 ```bash
 cp example.env .env
-```
-
-2. Set a secure `JWT_SECRET` in base64 format:
-
-```bash
 openssl rand -base64 32
 ```
 
-3. Build the production image:
-
-```bash
-docker build -t opencw-backend:latest .
-```
-
-4. Run with explicit environment values:
-
-```bash
-docker run --rm -p 8080:8080 \
-  -e PORT=8080 \
-  -e GIN_MODE=release \
-  -e DB_HOST=host.docker.internal \
-  -e DB_PORT=5432 \
-  -e DB_USER=user \
-  -e DB_PASSWORD=secret \
-  -e DB_NAME=opencw \
-  -e JWT_SECRET=<base64-secret> \
-  -e RESEND_API_KEY=<resend-api-key> \
-  -e RESEND_FROM_EMAIL='OpenCW <onboarding@resend.dev>' \
-  opencw-backend:latest
-```
-
-## Run app + Postgres with Docker Compose
+Fill `JWT_SECRET` with the generated value and supply `RESEND_API_KEY` and `RESEND_FROM_EMAIL`; startup validates them. Development database defaults are in the template. Never source `.env` as a shell script.
 
 ```bash
 docker compose up --build -d
+curl http://127.0.0.1:8080/v1/health
 ```
 
-Health check endpoint:
+Compose runs the API, PostgreSQL, and pgAdmin. It overrides the API's database host to `db`; the database uses a named `pgdata` volume. pgAdmin binds to loopback. Image versions and ports are defined in Compose. Database tuning shares the root [tuner](../db/README.md); optional `POSTGRES_*` overrides belong in `backend/.env`.
+
+To run Go on the host instead, start `docker compose up -d db`, keep `DB_HOST=localhost` in `.env`, and run `go run ./cmd/api-server`. Development mode loads `.env` and enables profiling; keep its `/debug/pprof/*` routes private. The [production Dockerfile](Dockerfile) builds a static binary and sets `GIN_MODE=release`, which disables profiling.
+
+## Verification and contracts
 
 ```bash
-curl http://localhost:8080/v1/health
+go test ./...
+go vet ./...
 ```
 
-The `db` service derives its PostgreSQL settings from the resources the Docker VM has, and logs
-what it chose:
+[V1 API](API.md) covers authentication, settings, progress, and forum routes. [V2 training synchronization](docs/training-events-v2.md) defines event ingestion and snapshots. [Request schemas](internal/common/input.go), [response schemas](internal/common/response.go), and [router registration](internal/server/router.go) define the implemented wire contracts.
 
-```bash
-docker compose logs db | grep opencw-pg-tune
-```
-
-To give it a different budget, set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` in this
-folder's `.env`. The full guide is [db/README.md](../db/README.md).
-
+Backend startup runs GORM migrations. Preserve data before changing revisions; image rollback does not reverse a schema migration. Local `docker compose down -v` removes both PostgreSQL and pgAdmin named volumes.

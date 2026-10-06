@@ -29,14 +29,17 @@ KEEP ?=
 FILE ?=
 REF ?=
 TIMEOUT ?=
+# Pass these as quoted arguments; automatic export would expand literal Make syntax.
+unexport FILE REF KEEP TIMEOUT
 
 _DRY := $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)
 _YES := $(if $(filter 1 true yes,$(YES)),--yes,)
 _NO_BACKUP := $(if $(filter 1 true yes,$(NO_BACKUP)),--no-backup,)
-_KEEP := $(if $(KEEP),--keep $(KEEP),)
-_FILE := $(if $(FILE),--file $(FILE),)
-_REF := $(if $(REF),--ref $(REF),)
-_TIMEOUT := $(if $(TIMEOUT),--timeout $(TIMEOUT),)
+shell_quote = '$(subst ','"'"',$(1))'
+_KEEP := $(if $(value KEEP),--keep $(call shell_quote,$(value KEEP)),)
+_FILE := $(if $(value FILE),--file $(call shell_quote,$(value FILE)),)
+_REF := $(if $(value REF),--ref $(call shell_quote,$(value REF)),)
+_TIMEOUT := $(if $(value TIMEOUT),--timeout $(call shell_quote,$(value TIMEOUT)),)
 
 .PHONY: help check deploy update backup restore status
 

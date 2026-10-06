@@ -39,7 +39,7 @@ while (( $# )); do
   case "$1" in
     --ref)
       shift
-      [[ $# ]] || die "--ref needs a revision"
+      [[ $# && -n $1 && $1 != -* ]] || die "--ref needs a branch, tag or commit"
       REF="$1"
       ;;
     --no-backup) NO_BACKUP=1 ;;
@@ -65,10 +65,13 @@ while (( $# )); do
   shift
 done
 
+TIMEOUT="$(parse_nonnegative_integer "${TIMEOUT}" '--timeout')"
+KEEP="$(parse_nonnegative_integer "${KEEP}" '--keep')"
 require_docker
 require_compose_file
 require_git_checkout
 require_env_file
+"${SCRIPTS_DIR}/check-env.sh" || die "fix the environment before updating"
 
 git_step() {
   local description="$1"
@@ -83,10 +86,50 @@ git_step() {
 
 # --- rollback helpers -------------------------------------------------------
 
+verify_services() {
+  local verified=1 service
+  for service in db backend frontend pgadmin; do
+    wait_service_healthy "${service}" "${TIMEOUT}" || verified=0
+  done
+  if (( verified )); then
+    wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || verified=0
+    wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || verified=0
+    wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
+  else
+    warn "skipping the HTTP probes because a container did not become healthy"
+  fi
+  (( verified ))
+}
+
+canonical_image_ref() {
+  local image="$1"
+  [[ ${image##*/} == *:* || ${image} == *@* ]] || image+=':latest'
+  printf '%s' "${image}"
+}
+
+verify_restored_images() {
+  local containers pair expected cid configured actual matched
+  containers="$(compose ps -aq)" || return 1
+  for pair in "${SNAPSHOTS[@]}"; do
+    expected="$(docker image inspect -f '{{.Id}}' "${pair##*|}")" || return 1
+    [[ -n ${expected} ]] || return 1
+    matched=0
+    while IFS= read -r cid; do
+      [[ -n ${cid} ]] || continue
+      configured="$(docker inspect -f '{{.Config.Image}}' "${cid}")" || return 1
+      [[ $(canonical_image_ref "${configured}") == "$(canonical_image_ref "${pair%%|*}")" ]] || continue
+      matched=1
+      actual="$(docker inspect -f '{{.Image}}' "${cid}")" || return 1
+      [[ ${actual} == "${expected}" ]] || { warn "${configured} is not running the restored image"; return 1; }
+    done <<< "${containers}"
+    (( matched )) || { warn "no container found for restored image ${pair%%|*}"; return 1; }
+  done
+}
+
 snapshot_rollback_lines() {
   local pair
   for pair in "${SNAPSHOTS[@]}"; do
-    printf '  docker tag %s %s\n' "${pair##*|}" "${pair%%|*}"
+    printf '  %s\n' "$(_quote_cmd docker tag "${pair##*|}" "${pair%%|*}")"
   done
 }
 
@@ -95,30 +138,32 @@ print_rollback_help() {
   warn "the update did not come up cleanly"
   {
     printf 'Roll back with:\n\n'
-    printf '  git -C %s checkout --detach %s\n' "${ROOT_DIR}" "${PREV_REF}"
+    printf '  %s\n' "$(_quote_cmd git -C "${ROOT_DIR}" checkout --detach "${PREV_REF}")"
     if (( ${#SNAPSHOTS[@]} )); then
       snapshot_rollback_lines
     else
       printf '  # no image snapshots were taken (no local images before the rebuild)\n'
     fi
-    printf '  docker compose -f %s up -d --no-build\n\n' "${COMPOSE_FILE}"
+    printf '  %s\n\n' "$(_quote_cmd docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --no-build)"
     if [[ -n ${PREV_BACKUP} ]]; then
       printf 'If the application is broken rather than the images, restore the pre-update dump:\n\n'
-      printf '  scripts/restore.sh --file %s\n\n' "${PREV_BACKUP}"
+      printf '  %s\n\n' "$(_quote_cmd env "ENV_FILE=${ENV_FILE}" "${SCRIPTS_DIR}/restore.sh" --file "${PREV_BACKUP}")"
     fi
     printf 'AutoMigrate runs at backend startup and is forward-only, so an image rollback does\n'
     printf 'not undo schema changes. Re-run with --auto-rollback to do the image part for you.\n\n'
     printf 'The rollback leaves the checkout on a detached HEAD, so before your next update\n'
     printf 'return to a branch (and fix whatever the failure was, e.g. .env):\n\n'
-    printf '  git -C %s checkout %s\n' "${ROOT_DIR}" "$(resume_branch)"
+    printf '  %s\n' "$(_quote_cmd git -C "${ROOT_DIR}" checkout "$(resume_branch)")"
   } >&2
 }
 
-# Branch to tell the operator to return to: the one recorded by the last
-# successful update, falling back to main. Reads "HEAD" when the checkout is
-# already detached.
+# Resume this update's branch, or the last recorded branch after a detached rollback.
 resume_branch() {
   local branch
+  if [[ -n ${PREV_BRANCH} && ${PREV_BRANCH} != HEAD ]]; then
+    printf '%s' "${PREV_BRANCH}"
+    return 0
+  fi
   branch="$(state_get PREV_BRANCH || true)"
   if [[ -z ${branch} || ${branch} == HEAD ]]; then
     printf 'main'
@@ -139,10 +184,10 @@ fail_update() {
     local pair
     for pair in "${SNAPSHOTS[@]}"; do
       docker tag "${pair##*|}" "${pair%%|*}" ||
-        warn "could not restore image ${pair%%|*} from ${pair##*|}"
+        die "could not restore image ${pair%%|*}; rollback stopped before restarting services"
     done
-    if compose up -d --no-build; then
-      ok "the previous images are running again; the database may still carry newer migrations"
+    if compose up -d --no-build && verify_restored_images && verify_services; then
+      ok "the previous images are running and healthy; the database may still carry newer migrations"
       info "review 'docker compose logs --tail=100 backend' and consider scripts/restore.sh"
     else
       warn "the automatic rollback did not complete; use the commands above"
@@ -170,6 +215,9 @@ info "current revision: ${PREV_REF:0:12} (${PREV_BRANCH})"
 # revision should not snapshot images and take a database backup first. UPSTREAM
 # is reused by step 3.
 UPSTREAM=''
+TARGET_COMMIT=''
+TARGET_BRANCH=''
+NEW_TRACKING_BRANCH=0
 if [[ -z ${REF} ]]; then
   # A detached HEAD has no upstream, so `git pull` cannot work. That is the state
   # a rollback leaves behind, so name the branch to return to rather than
@@ -180,6 +228,30 @@ if [[ -z ${REF} ]]; then
   UPSTREAM="$( cd -- "${ROOT_DIR}" && git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true )"
   if [[ -z ${UPSTREAM} ]]; then
     die "'${PREV_BRANCH}' has no upstream branch; pass a revision explicitly with --ref"
+  fi
+else
+  git_step "fetching requested revision" fetch --all --tags --prune
+  target_spec="${REF}"
+  if git_in_root show-ref --verify --quiet "refs/heads/${REF}"; then
+    TARGET_BRANCH="${REF}"
+    target_spec="$(git_in_root rev-parse --abbrev-ref --symbolic-full-name "${REF}@{u}" 2>/dev/null || true)"
+    if [[ -z ${target_spec} ]]; then
+      target_spec="refs/heads/${REF}"
+      if git_in_root show-ref --verify --quiet "refs/remotes/origin/${REF}"; then
+        target_spec="origin/${REF}"
+      fi
+    fi
+  elif git_in_root check-ref-format --branch "${REF}" >/dev/null 2>&1 &&
+      git_in_root show-ref --verify --quiet "refs/remotes/origin/${REF}"; then
+    TARGET_BRANCH="${REF}"
+    NEW_TRACKING_BRANCH=1
+    target_spec="origin/${REF}"
+  fi
+  TARGET_COMMIT="$(git_in_root rev-parse --verify --end-of-options "${target_spec}^{commit}" 2>/dev/null)" ||
+    die "'${REF}' does not resolve to a commit"
+  if [[ -n ${TARGET_BRANCH} && ${NEW_TRACKING_BRANCH} == 0 ]]; then
+    git_in_root merge-base --is-ancestor "refs/heads/${TARGET_BRANCH}" "${TARGET_COMMIT}" ||
+      die "'${TARGET_BRANCH}' cannot fast-forward to '${target_spec}'; resolve its history before updating"
   fi
 fi
 
@@ -225,8 +297,14 @@ fi
 # --- 3. move to the target revision ----------------------------------------
 
 if [[ -n ${REF} ]]; then
-  git_step "fetching" fetch --all --tags --prune
-  git_step "checking out ${REF}" checkout "${REF}"
+  if (( NEW_TRACKING_BRANCH )); then
+    git_step "checking out ${REF}" checkout --track -b "${TARGET_BRANCH}" "origin/${TARGET_BRANCH}"
+  elif [[ -n ${TARGET_BRANCH} ]]; then
+    git_step "checking out ${REF}" checkout "${TARGET_BRANCH}"
+    git_step "fast-forwarding ${REF}" merge --ff-only "${TARGET_COMMIT}"
+  else
+    git_step "checking out ${REF}" checkout --detach "${TARGET_COMMIT}"
+  fi
 else
   git_step "pulling ${UPSTREAM} (fast-forward only)" pull --ff-only
 fi
@@ -256,21 +334,7 @@ if [[ ${DRY_RUN} == 1 ]]; then
   dry_pipe "wait for db/backend/frontend/pgadmin, then probe /v1/health"
 else
   info "verifying the stack (timeout ${TIMEOUT}s per service)"
-  verified=1
-  wait_service_healthy db "${TIMEOUT}" || verified=0
-  wait_service_healthy backend "${TIMEOUT}" || verified=0
-  wait_service_healthy frontend "${TIMEOUT}" || verified=0
-  # Only probe over HTTP once the containers themselves are up. Probing an
-  # endpoint whose container has already failed just burns the full timeout.
-  if (( verified )); then
-    wait_http "backend API" "http://127.0.0.1:${API_PORT}/v1/health" "${TIMEOUT}" || verified=0
-    wait_http "frontend" "http://127.0.0.1:${FRONTEND_PORT}/" "${TIMEOUT}" || verified=0
-    wait_http "pgAdmin" "http://127.0.0.1:${PGADMIN_PORT}/misc/ping" "${TIMEOUT}" || true
-  else
-    warn "skipping the HTTP probes because a container did not become healthy"
-  fi
-
-  if (( verified == 0 )); then
+  if ! verify_services; then
     fail_update
   fi
 fi
@@ -297,7 +361,7 @@ ok "update complete: ${PREV_REF:0:12} -> ${new_ref:0:12}"
 printf '\n'
 printf '  Revision    %s\n' "${new_ref}"
 printf '  Backup      %s\n' "${PREV_BACKUP:-none (--no-backup)}"
-printf '  Rollback    git -C %s checkout --detach %s\n' "${ROOT_DIR}" "${PREV_REF}"
+printf '  Rollback    %s\n' "$(_quote_cmd git -C "${ROOT_DIR}" checkout --detach "${PREV_REF}")"
 if (( ${#SNAPSHOTS[@]} )); then
   printf '\nImage snapshots kept for rollback (review them with "docker images | grep pre-"):\n'
   snapshot_rollback_lines
