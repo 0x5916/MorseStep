@@ -1,3 +1,4 @@
+import { browser } from '$app/environment';
 import { normalizeLocalePreference, LOCALE_PREFERENCE_STORAGE_KEY } from '$lib/locale';
 import { CW_STORAGE_KEYS } from '$lib/storageKeys';
 
@@ -34,7 +35,7 @@ function expireCookie(name: string): void {
  * localStorage values win, and the legacy cookies are removed either way.
  */
 export function migrateLegacyPreferences(): void {
-  if (typeof localStorage === 'undefined' || typeof document === 'undefined') return;
+  if (!browser || typeof localStorage === 'undefined' || typeof document === 'undefined') return;
 
   const legacyLocale = readCookie(LEGACY_LOCALE_COOKIE);
   if (!localStorage.getItem(LOCALE_PREFERENCE_STORAGE_KEY) && legacyLocale) {

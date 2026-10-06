@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ArrowRight } from '@lucide/svelte';
   import { localizedHref as href } from '$lib/i18n.svelte';
-  import { LESSONS } from '$lib/morse';
+  import { getLessonCharacterSet } from '$lib/training/sequence';
   import { GITHUB_URL } from '$lib/seo';
   import * as m from '$lib/paraglide/messages';
 
@@ -13,59 +13,79 @@
     { title: m.home_step3_title, body: m.home_step3_body }
   ];
 
-  // Where to go next: the four surfaces of the product as one plain list.
   const destinations = [
-    { path: '/morse/learn', title: m.nav_learn, body: m.home_go_train },
-    { path: '/forum', title: m.nav_forum, body: m.home_go_forum },
+    { path: '/morse/practice', title: m.nav_practice, body: m.home_go_practice },
     { path: '/morse/progress', title: m.nav_progress, body: m.home_go_progress },
+    { path: '/forum', title: m.nav_forum, body: m.home_go_forum },
     { path: '/about', title: m.nav_about, body: m.home_go_about }
   ];
 
-  // Decorative trainer mock-up: show the character set a learner has unlocked.
-  const PREVIEW_LESSON = 7;
-  const previewChars = LESSONS.slice(0, PREVIEW_LESSON).join('').split('');
-  const previewNewChars = (LESSONS[PREVIEW_LESSON - 1] ?? '').length;
+  const PREVIEW_LESSON = 1;
+  const previewChars = getLessonCharacterSet(PREVIEW_LESSON);
 </script>
 
-<!-- Masthead: the product in one paragraph, with one action to take. -->
-<section class="masthead">
-  <h1 class="masthead-title">{m.home_hero_title()}</h1>
-  <p class="masthead-lede">{m.home_hero_subtitle()}</p>
-  <div class="masthead-actions">
-    <a href={href('/morse/learn')} class="btn-cta"
-      >{m.home_cta()}<ArrowRight size={18} aria-hidden="true" /></a
-    >
-    <a href={href('/about')} class="link">{m.home_hero_cta_secondary()}</a>
+<section class="masthead" aria-labelledby="home-title">
+  <div class="masthead-artwork" aria-hidden="true">
+    <img
+      class="key-artwork"
+      src="/images/home/telegraph-key.webp"
+      alt=""
+      width="960"
+      height="640"
+      fetchpriority="high"
+      decoding="async"
+    />
+    <img
+      class="antenna-artwork"
+      src="/images/home/antenna.webp"
+      alt=""
+      width="600"
+      height="400"
+      loading="lazy"
+      decoding="async"
+    />
+    <img
+      class="station-artwork"
+      src="/images/home/radio-station.webp"
+      alt=""
+      width="800"
+      height="533"
+      loading="lazy"
+      decoding="async"
+    />
+  </div>
+  <div class="masthead-copy">
+    <h1 id="home-title" class="masthead-title">{m.home_hero_title()}</h1>
+    <p class="masthead-lede">{m.home_hero_subtitle()}</p>
+    <div class="masthead-actions">
+      <a href={href('/morse/learn')} class="btn-cta"
+        >{m.home_cta()}<ArrowRight size={18} aria-hidden="true" /></a
+      >
+      <a href={href('/morse/practice')} class="link practice-link">{m.home_hero_cta_secondary()}</a>
+    </div>
+    <p class="body-text reassurance">{m.home_reassurance()}</p>
   </div>
 </section>
 
-<!-- What a session looks like, next to how the method works. -->
-<section class="workbench">
-  <div class="preview-col">
-    <!-- Decorative: the interactive trainer lives on /morse/learn -->
-    <div class="preview-frame" aria-hidden="true">
-      <span class="card-label">{m.trainer_label_lesson()} {PREVIEW_LESSON}</span>
-      <p class="preview-chars">
-        {#each previewChars as char, index (char)}<span
-            class="preview-char"
-            class:is-new={index >= previewChars.length - previewNewChars}>{char}</span
-          >{/each}
-      </p>
-      <span class="preview-line"></span>
-      <div class="preview-answer">
-        <span class="preview-answer-text">{m.trainer_answer_placeholder()}</span>
-        <span class="preview-check">{m.trainer_check()}</span>
-      </div>
+<div class="learning-intro">
+  <!-- An introduction to the first lesson, with no pretend trainer controls. -->
+  <figure class="preview-frame" aria-labelledby="home-preview-title">
+    <div class="preview-heading">
+      <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
+      <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
     </div>
-    <p class="body-text preview-caption">{m.home_preview_caption()}</p>
-  </div>
+    <p class="preview-chars">
+      {#each previewChars as char (char)}<span class="preview-char">{char}</span>{/each}
+    </p>
+    <figcaption class="body-text preview-caption">{m.home_preview_caption()}</figcaption>
+  </figure>
 
-  <div class="method">
-    <h2 class="section-title">{m.home_steps_title()}</h2>
+  <section class="method" aria-labelledby="home-method-title">
+    <h2 id="home-method-title" class="section-title">{m.home_steps_title()}</h2>
     <ol class="step-list">
       {#each steps as step, index (step.title)}
         <li class="step">
-          <span class="step-number">{index + 1}</span>
+          <span class="step-number" aria-hidden="true">{index + 1}</span>
           <div>
             <strong class="step-title">{step.title()}</strong>
             <p class="body-text">{step.body()}</p>
@@ -73,22 +93,24 @@
         </li>
       {/each}
     </ol>
-  </div>
-</section>
+  </section>
+</div>
 
 <!-- Destinations: a plain list of where the product continues. -->
 <section class="destinations">
-  <h2 class="section-title">{m.home_go_title()}</h2>
-  <ul class="row-list">
-    {#each destinations as destination (destination.path)}
-      <li>
-        <a class="row-link dest-row" href={href(destination.path)}>
-          <span class="dest-title">{destination.title()}</span>
-          <span class="dest-body">{destination.body()}</span>
-        </a>
-      </li>
-    {/each}
-  </ul>
+  <div class="destinations-copy">
+    <h2 class="section-title">{m.home_go_title()}</h2>
+    <ul class="row-list">
+      {#each destinations as destination (destination.path)}
+        <li>
+          <a class="row-link dest-row" href={href(destination.path)}>
+            <span class="dest-title">{destination.title()}</span>
+            <span class="dest-body">{destination.body()}</span>
+          </a>
+        </li>
+      {/each}
+    </ul>
+  </div>
 </section>
 
 <!-- Who builds it. -->
@@ -103,151 +125,178 @@
 </section>
 
 <style>
-  /* Masthead: left-aligned editorial opener. The headline is ink; the amber is
-     reserved for the action next to it. */
-  .masthead {
-    padding-bottom: var(--section-gap);
+  .learning-intro,
+  .destinations,
+  .colophon {
+    --home-section-gap: calc(var(--space-6) * 2);
   }
 
-  /* The page's own title carries no rule: the sticky chrome already bounds it
-     from above, and the lede below belongs to it rather than following it. */
+  .masthead {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    justify-items: center;
+    gap: var(--space-6);
+  }
+
+  .masthead-copy {
+    min-width: 0;
+    max-width: 34rem;
+    text-align: center;
+  }
+
+  .masthead-artwork {
+    grid-row: 2;
+    width: 100%;
+    pointer-events: none;
+  }
+
+  .key-artwork,
+  .antenna-artwork,
+  .station-artwork {
+    display: block;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .key-artwork {
+    width: 12rem;
+    margin-inline: auto;
+  }
+
+  .antenna-artwork,
+  .station-artwork {
+    display: none;
+  }
+
   .masthead-title {
-    margin: 0;
-    max-width: 30rem;
-    font-size: var(--text-3xl);
+    margin: 0 auto;
+    max-width: 14ch;
+    font-size: clamp(var(--text-3xl), 5.5vw, 4.5rem);
     line-height: var(--leading-tight);
     font-weight: 600;
     letter-spacing: -0.02em;
     color: var(--text-primary);
+    text-wrap: balance;
   }
 
-  /* The rule used to hold the lede off the heading; the gap does that now. */
   .masthead-lede {
     margin: var(--space-4) 0 var(--space-5);
-    max-width: 38rem;
     font-size: var(--text-lg);
     line-height: var(--leading-relaxed);
     color: var(--text-secondary);
+    text-wrap: pretty;
   }
 
   .masthead-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: center;
     gap: var(--space-4);
   }
 
-  .workbench {
+  .masthead-actions :global(a) {
+    min-height: var(--answer-target-min);
+  }
+
+  .practice-link {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .reassurance {
+    margin: var(--space-3) 0 0;
+  }
+
+  .learning-intro {
     display: grid;
+    align-items: start;
     gap: var(--space-8);
-    margin-top: var(--section-gap);
+    margin-top: var(--home-section-gap);
   }
 
-  @media (min-width: 800px) {
-    .workbench {
-      grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
-      align-items: start;
-    }
-  }
-
-  .preview-col {
-    min-width: 0;
-  }
-
-  /* Decorative mock of the trainer: it shows what a session looks like without
-     pretending to be one. */
   .preview-frame {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4);
+    min-width: 0;
+    gap: var(--space-4);
+    margin: 0;
+    padding: var(--space-5);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background-color: var(--bg-inset);
   }
 
-  .preview-frame :global(.card-label) {
-    margin-bottom: 0;
+  .preview-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .preview-title {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    line-height: var(--leading-snug);
+  }
+
+  .preview-lesson {
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
   }
 
   .preview-chars {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: var(--space-3);
     margin: 0;
     font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
+    font-size: var(--text-2xl);
+    color: var(--text-primary);
   }
 
   .preview-char {
-    min-width: 1.6rem;
-    padding: 0.15rem 0.3rem;
+    min-width: var(--answer-target-min);
+    padding: var(--space-2) var(--space-3);
     text-align: center;
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
     background-color: var(--bg-surface);
   }
 
-  .preview-char.is-new {
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  /* The timing line: the playhead motif that identifies the trainer. */
-  .preview-line {
-    height: 2px;
-    background: linear-gradient(to right, var(--accent) 0 38%, var(--border) 38% 100%);
-  }
-
-  .preview-answer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background-color: var(--bg-surface);
-  }
-
-  .preview-answer-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-  }
-
-  /* Inside the mock the "check" affordance is a mono label, never a filled
-     button: the frame is aria-hidden decoration. */
-  .preview-check {
-    flex-shrink: 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-  }
-
   .preview-caption {
-    margin: var(--space-3) 0 0;
+    margin: 0;
   }
 
   .method {
     min-width: 0;
   }
 
+  .method .section-title {
+    margin-top: 0;
+  }
+
+  .method .step-list {
+    display: grid;
+    gap: var(--space-6);
+  }
+
   .destinations {
-    margin-top: var(--section-gap);
+    margin-top: var(--home-section-gap);
+  }
+
+  .destinations-copy {
+    min-width: 0;
   }
 
   .dest-row {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-4);
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
   }
 
   .dest-title {
@@ -263,7 +312,7 @@
   }
 
   .colophon {
-    margin-top: var(--section-gap);
+    margin-top: var(--home-section-gap);
   }
 
   .colophon :global(.body-text) {
@@ -275,5 +324,81 @@
     flex-wrap: wrap;
     gap: var(--space-4);
     margin-top: var(--space-2);
+  }
+
+  .colophon-links :global(a) {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--answer-target-min);
+  }
+
+  @media (min-width: 800px) {
+    .learning-intro,
+    .destinations,
+    .colophon {
+      --home-section-gap: calc(var(--space-8) * 2);
+    }
+
+    .learning-intro {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    }
+  }
+
+  @media (min-width: 1100px) {
+    .masthead {
+      min-height: 40rem;
+      align-items: center;
+    }
+
+    .masthead-artwork {
+      position: absolute;
+      grid-row: auto;
+      inset-block: 0;
+      left: 50%;
+      z-index: -1;
+      width: 100vw;
+      overflow: clip;
+      transform: translateX(-50%);
+      background:
+        radial-gradient(
+          ellipse at 10% 20%,
+          color-mix(in srgb, var(--bg-inset) 80%, transparent),
+          transparent 45%
+        ),
+        radial-gradient(
+          ellipse at 90% 80%,
+          color-mix(in srgb, var(--bg-inset) 80%, transparent),
+          transparent 45%
+        );
+    }
+
+    .key-artwork,
+    .antenna-artwork,
+    .station-artwork {
+      position: absolute;
+      display: block;
+      margin: 0;
+    }
+
+    .key-artwork {
+      top: var(--space-8);
+      left: calc(var(--space-10) * -2);
+      width: clamp(18rem, 25vw, 28rem);
+      transform: rotate(-12deg);
+    }
+
+    .antenna-artwork {
+      top: var(--space-6);
+      right: calc(var(--space-8) * 2);
+      width: clamp(12rem, 18vw, 20rem);
+      transform: rotate(8deg);
+    }
+
+    .station-artwork {
+      right: calc(var(--space-6) * -2);
+      bottom: calc(var(--space-6) * -1);
+      width: clamp(18rem, 24vw, 26rem);
+      transform: rotate(-6deg);
+    }
   }
 </style>
