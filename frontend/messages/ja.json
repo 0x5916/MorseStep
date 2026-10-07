@@ -49,6 +49,11 @@
   "home_reassurance": "無料で利用できます。アカウントは不要です。ガイド付きレッスンの進捗はこの端末に保存されます。",
   "home_preview_title": "最初のレッスン",
   "home_preview_caption": "音を聞いて文字を答えると、回答ごとにフィードバックを受けられます。",
+  "home_sample_play": "「{character}」の音を聞く",
+  "home_sample_stop": "「{character}」の再生を止める",
+  "home_sample_playing": "「{character}」を再生中…",
+  "home_sample_hint": "文字を選ぶと、その音を聞けます。",
+  "home_sample_error": "音を再生できませんでした。もう一度試すか、レッスンに進んでください。",
   "home_steps_title": "使い方",
   "home_step1_title": "聞く",
   "home_step1_body": "まずは2つの文字から始め、それぞれを目標の速度で聞きます。",
@@ -383,5 +388,13 @@
   "learn_status_unmeasured": "未評価",
   "learn_practice_hint": "文字を自分で選んだり、長めの文章を練習したりしたいですか？",
   "learn_practice_cta": "練習メニューを見る",
-  "learn_next_recommendation": "おすすめの練習"
+  "learn_next_recommendation": "おすすめの練習",
+
+  "lesson_correct": "正解",
+  "lesson_warmup_feedback": "ウォームアップ問題 — 認識速度は測定しません。",
+  "lesson_answer_label": "答えを入力",
+  "lesson_type_character": "1文字入力してください。答えは自動的に送信されます。",
+  "lesson_type_group": "{count}文字入力してください。すべて入力すると答えが自動的に送信されます。",
+  "lesson_playing_character": "{character}を再生中…",
+  "lesson_feedback_audio_error": "音を再生できませんでした。再生ボタンをもう一度押してください。"
 }

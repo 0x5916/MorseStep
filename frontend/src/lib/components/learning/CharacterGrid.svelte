@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { acceptsSessionShortcut } from './keyboard';
   interface Props {
     options: string[];
     disabled?: boolean;
@@ -8,7 +9,7 @@
   let { options = [], disabled = false, onSelect = () => {} }: Props = $props();
 
   function handleKeydown(event: KeyboardEvent) {
-    if (disabled) return;
+    if (disabled || !acceptsSessionShortcut(event, true)) return;
     const key = event.key.toUpperCase();
     if (options.includes(key)) {
       event.preventDefault();
@@ -20,7 +21,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="character-grid" role="group" aria-label="Character options">
-  {#each options as option, idx (option)}
+  {#each options as option (option)}
     <button
       type="button"
       class="grid-cell"
@@ -29,7 +30,6 @@
       aria-label={`Select ${option}`}
     >
       <span class="grid-char">{option}</span>
-      <span class="grid-hint">{idx + 1}</span>
     </button>
   {/each}
 </div>
@@ -84,14 +84,5 @@
     font-size: 1.75rem;
     font-weight: 700;
     line-height: 1;
-  }
-
-  .grid-hint {
-    position: absolute;
-    bottom: 0.2rem;
-    right: 0.35rem;
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    color: var(--text-muted);
   }
 </style>

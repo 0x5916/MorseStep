@@ -49,6 +49,11 @@
   "home_reassurance": "免费使用。无需账号。引导课程的进度保存在这台设备上。",
   "home_preview_title": "你的第一课",
   "home_preview_caption": "聆听声音，识别字符，每次作答后都能获得反馈。",
+  "home_sample_play": "聆听 {character}",
+  "home_sample_stop": "停止播放 {character}",
+  "home_sample_playing": "正在播放 {character}…",
+  "home_sample_hint": "选择一个字符，聆听它的声音。",
+  "home_sample_error": "声音无法播放。请重试，或继续学习课程。",
   "home_steps_title": "使用方式",
   "home_step1_title": "聆听",
   "home_step1_body": "从两个字符开始，以你的目标速度聆听每个字符。",
@@ -384,5 +389,13 @@
   "learn_status_unmeasured": "尚未评估",
   "learn_practice_hint": "想自行选择字符，或练习更长的文章？",
   "learn_practice_cta": "查看练习模式",
-  "learn_next_recommendation": "推荐练习"
+  "learn_next_recommendation": "推荐练习",
+
+  "lesson_correct": "正确",
+  "lesson_warmup_feedback": "热身题 — 不测量识别速度。",
+  "lesson_answer_label": "输入答案",
+  "lesson_type_character": "输入一个字符，答案会自动提交。",
+  "lesson_type_group": "输入 {count} 个字符，输入完整后答案会自动提交。",
+  "lesson_playing_character": "正在播放 {character}…",
+  "lesson_feedback_audio_error": "无法播放声音，请再次点击播放按钮。"
 }

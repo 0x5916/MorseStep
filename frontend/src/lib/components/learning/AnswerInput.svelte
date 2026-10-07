@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import type { InputMode } from '../../training/v2/types';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     disabled?: boolean;
@@ -18,14 +19,18 @@
 
   let inputVal = $state('');
   let inputEl = $state<HTMLInputElement | null>(null);
+  let composing = false;
 
   $effect(() => {
     if (!disabled && autoFocus && inputEl) {
-      tick().then(() => inputEl?.focus());
+      tick().then(() => {
+        if (!disabled && autoFocus) inputEl?.focus();
+      });
     }
   });
 
   function handleInput(event: Event) {
+    if (disabled || composing || (event as InputEvent).isComposing) return;
     const target = event.target as HTMLInputElement;
     const clean = target.value.trim().toUpperCase();
     inputVal = clean;
@@ -37,11 +42,18 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (disabled) return;
+    if (disabled || composing || event.isComposing || event.keyCode === 229) return;
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (inputVal.length > 0) {
+      event.stopPropagation();
+      if (
+        !event.repeat &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        inputVal.length === expectedLength
+      ) {
         submit(inputVal, 'keyboard');
       }
     }
@@ -67,12 +79,20 @@
     autocapitalize="characters"
     spellcheck="false"
     placeholder="·"
-    aria-label="Type your answer"
+    aria-label={m.lesson_answer_label()}
+    aria-describedby="answer-instruction"
     oninput={handleInput}
     onkeydown={handleKeydown}
+    oncompositionstart={() => (composing = true)}
+    oncompositionend={(event) => {
+      composing = false;
+      handleInput(event);
+    }}
   />
-  <div class="input-instruction">
-    <span>Type the character or press <kbd class="kbd">Enter</kbd> to submit</span>
+  <div class="input-instruction" id="answer-instruction">
+    {expectedLength === 1
+      ? m.lesson_type_character()
+      : m.lesson_type_group({ count: expectedLength })}
   </div>
 </div>
 
@@ -114,16 +134,5 @@
   .input-instruction {
     font-size: var(--text-xs);
     color: var(--text-muted);
-  }
-
-  .kbd {
-    display: inline-block;
-    padding: 0.1rem 0.35rem;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    background-color: var(--bg-inset);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    color: var(--text-secondary);
   }
 </style>

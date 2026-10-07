@@ -86,7 +86,7 @@
   --transition-base: 200ms;
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 
-  --nav-control-height: 2.15rem;
+  --nav-control-height: 2.75rem;
   --max-width-container: 64rem;
   /* 46rem keeps body copy inside the ~75-char readable-line-length sweet spot
      while trimming a bit of the dead space `.page-narrow` pages (About,

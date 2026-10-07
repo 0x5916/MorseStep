@@ -224,7 +224,7 @@
 <div class="page-wrapper">
   {#if !isTrainingSession}
     <a class="skip-link" href="#main-content">{m.nav_skip_to_content()}</a>
-    <nav class="navbar">
+    <nav class="navbar" aria-label={m.nav_primary()}>
       <div class="navbar-inner">
         <!-- Brand -->
         <!-- Brand is the home affordance, so "Home" is not duplicated in the links -->

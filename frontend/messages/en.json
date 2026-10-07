@@ -49,6 +49,11 @@
   "home_reassurance": "Free to use. No account needed. Guided progress stays on this device.",
   "home_preview_title": "Your first lesson",
   "home_preview_caption": "Listen, identify the character, and get feedback after each answer.",
+  "home_sample_play": "Listen to {character}",
+  "home_sample_stop": "Stop playing {character}",
+  "home_sample_playing": "Playing {character}…",
+  "home_sample_hint": "Choose a character to hear its sound.",
+  "home_sample_error": "Sound could not play. Try again or continue to the lessons.",
   "home_steps_title": "How it works",
   "home_step1_title": "Listen",
   "home_step1_body": "Begin with two characters and hear each one at your target speed.",
@@ -384,5 +389,13 @@
   "learn_status_unmeasured": "Not measured yet",
   "learn_practice_hint": "Want to choose your own characters or practise a longer passage?",
   "learn_practice_cta": "Explore practice",
-  "learn_next_recommendation": "Recommended session"
+  "learn_next_recommendation": "Recommended session",
+
+  "lesson_correct": "Correct",
+  "lesson_warmup_feedback": "Warm-up answer — recognition speed is not measured.",
+  "lesson_answer_label": "Type your answer",
+  "lesson_type_character": "Type one character. Your answer is submitted automatically.",
+  "lesson_type_group": "Type {count} characters. Your answer is submitted automatically when complete.",
+  "lesson_playing_character": "Playing {character}…",
+  "lesson_feedback_audio_error": "The sound could not be played. Try a play button again."
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Volume2, RotateCcw, Play } from '@lucide/svelte';
   import type { GuidedSessionPhase } from '../../training/v2/guided-session';
+  import { acceptsSessionShortcut } from './keyboard';
 
   interface Props {
     phase: GuidedSessionPhase;
@@ -27,10 +28,7 @@
   let canPlay = $derived(phase === 'ready' || phase === 'introducing');
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.code === 'Space') {
-      const activeTag = document.activeElement?.tagName.toLowerCase();
-      if (activeTag === 'input' || activeTag === 'textarea') return;
-
+    if (event.code === 'Space' && acceptsSessionShortcut(event) && (canPlay || canReplay)) {
       event.preventDefault();
       if (canPlay) {
         onPlay();

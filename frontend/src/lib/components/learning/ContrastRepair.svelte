@@ -1,9 +1,11 @@
 <script lang="ts">
   import { Volume2 } from '@lucide/svelte';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     charA: string;
     charB: string;
+    playingCharacter?: string | null;
     onPlayA: () => void;
     onPlayB: () => void;
     onContinue: () => void;
@@ -12,6 +14,7 @@
   let {
     charA,
     charB,
+    playingCharacter = null,
     onPlayA = () => {},
     onPlayB = () => {},
     onContinue = () => {}
@@ -32,9 +35,14 @@
         class="btn-primary"
         onclick={onPlayA}
         aria-label={`Play sound for ${charA}`}
+        aria-pressed={playingCharacter === charA}
       >
         <Volume2 size={18} />
-        <span>Play {charA}</span>
+        <span
+          >{playingCharacter === charA
+            ? m.lesson_playing_character({ character: charA })
+            : `Play ${charA}`}</span
+        >
       </button>
     </div>
 
@@ -47,9 +55,14 @@
         class="btn-primary"
         onclick={onPlayB}
         aria-label={`Play sound for ${charB}`}
+        aria-pressed={playingCharacter === charB}
       >
         <Volume2 size={18} />
-        <span>Play {charB}</span>
+        <span
+          >{playingCharacter === charB
+            ? m.lesson_playing_character({ character: charB })
+            : `Play ${charB}`}</span
+        >
       </button>
     </div>
   </div>
@@ -121,5 +134,9 @@
     width: 100%;
     display: flex;
     justify-content: center;
+  }
+
+  .contrast-repair-card button {
+    min-height: var(--answer-target-min, 3rem);
   }
 </style>

@@ -1,5 +1,17 @@
 <script lang="ts">
-  import { ArrowRight } from '@lucide/svelte';
+  import { onMount } from 'svelte';
+  import {
+    ArrowRight,
+    ChevronRight,
+    Dumbbell,
+    Info,
+    LayoutDashboard,
+    MessageSquare,
+    Play,
+    Square
+  } from '@lucide/svelte';
+  import { createWebAudioEngine, type AudioEngine } from '$lib/audio/engine';
+  import { buildAudioPlan } from '$lib/training/timing';
   import { localizedHref as href } from '$lib/i18n.svelte';
   import { getLessonCharacterSet } from '$lib/training/sequence';
   import { GITHUB_URL } from '$lib/seo';
@@ -14,15 +26,62 @@
   ];
 
   const destinations = [
-    { path: '/morse/practice', title: m.nav_practice, body: m.home_go_practice },
-    { path: '/morse/progress', title: m.nav_progress, body: m.home_go_progress },
-    { path: '/forum', title: m.nav_forum, body: m.home_go_forum },
-    { path: '/about', title: m.nav_about, body: m.home_go_about }
+    { path: '/morse/practice', title: m.nav_practice, body: m.home_go_practice, icon: Dumbbell },
+    {
+      path: '/morse/progress',
+      title: m.nav_progress,
+      body: m.home_go_progress,
+      icon: LayoutDashboard
+    },
+    { path: '/forum', title: m.nav_forum, body: m.home_go_forum, icon: MessageSquare },
+    { path: '/about', title: m.nav_about, body: m.home_go_about, icon: Info }
   ];
 
   const PREVIEW_LESSON = 1;
   const previewChars = getLessonCharacterSet(PREVIEW_LESSON);
+  let sampleCharacter = $state<string | null>(null);
+  let sampleError = $state(false);
+  let audio: AudioEngine | null = null;
+
+  onMount(() => {
+    audio = createWebAudioEngine();
+    const unsubscribe = audio.subscribe(() => {
+      if (!audio?.isActive()) sampleCharacter = null;
+    });
+    return () => {
+      unsubscribe();
+      void audio?.dispose();
+      audio = null;
+    };
+  });
+
+  function playSample(character: string) {
+    if (!audio) return;
+    sampleError = false;
+    if (sampleCharacter === character) {
+      sampleCharacter = null;
+      void audio.stop({ notify: false });
+      return;
+    }
+    try {
+      audio.play(buildAudioPlan(character, { charWpm: 20, effWpm: 20, volume: 0.2 }));
+      sampleCharacter = character;
+    } catch {
+      sampleCharacter = null;
+      sampleError = true;
+      void audio.stop({ notify: false });
+    }
+  }
+
+  function stopHiddenSample() {
+    if (document.hidden) {
+      sampleCharacter = null;
+      void audio?.stop({ notify: false });
+    }
+  }
 </script>
+
+<svelte:document onvisibilitychange={stopHiddenSample} />
 
 <section class="masthead" aria-labelledby="home-title">
   <div class="masthead-artwork" aria-hidden="true">
@@ -68,16 +127,46 @@
 </section>
 
 <div class="learning-intro">
-  <!-- An introduction to the first lesson, with no pretend trainer controls. -->
+  <!-- This is a sound introduction, not an assessed recognition prompt. -->
   <figure class="preview-frame" aria-labelledby="home-preview-title">
     <div class="preview-heading">
       <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
       <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
     </div>
-    <p class="preview-chars">
-      {#each previewChars as char (char)}<span class="preview-char">{char}</span>{/each}
+    <div class="preview-chars">
+      {#each previewChars as char (char)}
+        <button
+          type="button"
+          class="preview-char"
+          aria-label={sampleCharacter === char
+            ? m.home_sample_stop({ character: char })
+            : m.home_sample_play({ character: char })}
+          aria-pressed={sampleCharacter === char}
+          onclick={() => playSample(char)}
+        >
+          <span class="sample-letter">{char}</span>
+          <span class="sample-action">
+            {#if sampleCharacter === char}<Square size={16} aria-hidden="true" />{:else}<Play
+                size={16}
+                aria-hidden="true"
+              />{/if}
+            {sampleCharacter === char ? m.player_stop() : m.home_step1_title()}
+          </span>
+        </button>
+      {/each}
+    </div>
+    <p class="sample-status body-text" aria-live="polite" aria-atomic="true">
+      {sampleCharacter
+        ? m.home_sample_playing({ character: sampleCharacter })
+        : m.home_sample_hint()}
     </p>
-    <figcaption class="body-text preview-caption">{m.home_preview_caption()}</figcaption>
+    {#if sampleError}<p class="sample-error body-text" role="alert">{m.home_sample_error()}</p>{/if}
+    <figcaption class="preview-caption">
+      <p class="body-text">{m.home_preview_caption()}</p>
+      <a href={href('/morse/learn')} class="link preview-link"
+        >{m.home_cta()}<ArrowRight size={16} aria-hidden="true" /></a
+      >
+    </figcaption>
   </figure>
 
   <section class="method" aria-labelledby="home-method-title">
@@ -97,15 +186,19 @@
 </div>
 
 <!-- Destinations: a plain list of where the product continues. -->
-<section class="destinations">
+<section class="destinations" aria-labelledby="home-destinations-title">
   <div class="destinations-copy">
-    <h2 class="section-title">{m.home_go_title()}</h2>
+    <h2 id="home-destinations-title" class="section-title">{m.home_go_title()}</h2>
     <ul class="row-list">
       {#each destinations as destination (destination.path)}
         <li>
           <a class="row-link dest-row" href={href(destination.path)}>
-            <span class="dest-title">{destination.title()}</span>
-            <span class="dest-body">{destination.body()}</span>
+            <span class="dest-icon"><destination.icon size={22} aria-hidden="true" /></span>
+            <span class="dest-copy">
+              <span class="dest-title">{destination.title()}</span>
+              <span class="dest-body">{destination.body()}</span>
+            </span>
+            <ChevronRight size={18} class="dest-chevron" aria-hidden="true" />
           </a>
         </li>
       {/each}
@@ -222,7 +315,7 @@
     min-width: 0;
     gap: var(--space-4);
     margin: 0;
-    padding: var(--space-5);
+    padding: var(--space-6);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background-color: var(--bg-inset);
@@ -253,21 +346,68 @@
     flex-wrap: wrap;
     gap: var(--space-3);
     margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-2xl);
     color: var(--text-primary);
   }
 
   .preview-char {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
     min-width: var(--answer-target-min);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-4) var(--space-3);
     text-align: center;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-xs);
     background-color: var(--bg-surface);
+    cursor: pointer;
+  }
+
+  .preview-char:hover,
+  .preview-char[aria-pressed='true'] {
+    border-color: var(--accent);
+    background-color: var(--bg-inset);
+  }
+
+  .sample-letter {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xl);
+    line-height: var(--leading-tight);
+  }
+
+  .sample-action,
+  .preview-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+  }
+
+  .sample-status {
+    min-height: calc(2em * var(--leading-normal));
+    margin: 0;
+  }
+
+  .sample-error {
+    margin: 0;
+    color: var(--status-bad);
+  }
+
+  .preview-link {
+    justify-content: space-between;
+    min-height: var(--answer-target-min);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
   }
 
   .preview-caption {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .preview-caption .body-text {
     margin: 0;
   }
 
@@ -275,13 +415,23 @@
     min-width: 0;
   }
 
-  .method .section-title {
-    margin-top: 0;
+  .section-title {
+    margin-bottom: var(--space-6);
+    padding: 0;
+    border: 0;
+    font-size: var(--text-2xl);
+    text-wrap: balance;
   }
 
   .method .step-list {
     display: grid;
     gap: var(--space-6);
+  }
+
+  .step .body-text {
+    margin: var(--space-1) 0 0;
+    max-width: 48ch;
+    font-size: var(--text-base);
   }
 
   .destinations {
@@ -292,15 +442,42 @@
     min-width: 0;
   }
 
+  .destinations li {
+    display: grid;
+  }
+
   .dest-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-4);
+    min-height: 7rem;
+    padding: var(--space-5) var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dest-icon {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
+    align-items: center;
+    justify-content: center;
+    width: var(--answer-target-min);
+    height: var(--answer-target-min);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-inset);
+    color: var(--accent);
+  }
+
+  .dest-copy {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .dest-row :global(.dest-chevron) {
+    color: var(--text-muted);
   }
 
   .dest-title {
-    font-size: var(--text-base);
+    font-size: var(--text-lg);
     font-weight: 600;
     color: var(--text-primary);
   }
@@ -313,10 +490,14 @@
 
   .colophon {
     margin-top: var(--home-section-gap);
+    padding-top: var(--space-8);
+    border-top: 1px solid var(--border);
   }
 
   .colophon :global(.body-text) {
     margin: 0;
+    max-width: 60ch;
+    font-size: var(--text-base);
   }
 
   .colophon-links {
@@ -332,6 +513,18 @@
     min-height: var(--answer-target-min);
   }
 
+  @media (max-width: 479px) {
+    .masthead-actions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-2);
+    }
+
+    .practice-link {
+      justify-content: center;
+    }
+  }
+
   @media (min-width: 800px) {
     .learning-intro,
     .destinations,
@@ -341,12 +534,19 @@
 
     .learning-intro {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+      gap: calc(var(--space-6) * 2);
+    }
+
+    .destinations .row-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: var(--space-8);
     }
   }
 
   @media (min-width: 1100px) {
     .masthead {
-      min-height: 40rem;
+      min-height: clamp(32rem, 68svh, 40rem);
       align-items: center;
     }
 

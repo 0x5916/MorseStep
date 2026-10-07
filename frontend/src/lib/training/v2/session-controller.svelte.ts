@@ -82,6 +82,8 @@ export class GuidedSessionController {
   });
 
   persistenceError = $state<string | null>(null);
+  feedbackCharacter = $state<string | null>(null);
+  feedbackAudioError = $state<string | null>(null);
 
   constructor(deps: SessionControllerDependencies) {
     this.#clock = deps.clock ?? (() => Date.now());
@@ -110,7 +112,8 @@ export class GuidedSessionController {
 
     // Subscribe to audio engine completion
     this.#audioUnsubscribe = this.#audioEngine.subscribe((event: AudioEngineEvent) => {
-      if (event === 'ended') {
+      // Closing an older context may notify after another playback starts.
+      if (event === 'ended' && !this.#audioEngine.isActive()) {
         this.onAudioEnded();
       }
     });
@@ -193,19 +196,26 @@ export class GuidedSessionController {
     }
   }
 
-  #playPromptAudio(prompt: Prompt): void {
+  #playPromptAudio(prompt: Prompt, text = prompt.spec.expectedText, feedback = false): void {
     try {
-      const plan = buildAudioPlan(prompt.spec.expectedText, {
+      const plan = buildAudioPlan(text, {
         charWpm: prompt.spec.charWpm,
         effWpm: prompt.spec.effWpm,
         frequency: prompt.spec.freqHz,
         startDelay: 0.1,
         volume: this.#volume
       });
+      if (plan.events.length === 0) throw new Error('No playable Morse characters');
       this.#audioEngine.play(plan);
     } catch (err) {
+      void this.#audioEngine.stop({ notify: false });
       const msg = err instanceof Error ? err.message : 'Audio playback error';
-      this.#dispatch({ type: 'audio-error', error: msg });
+      if (feedback) {
+        this.feedbackCharacter = null;
+        this.feedbackAudioError = msg;
+      } else {
+        this.#dispatch({ type: 'audio-error', error: msg });
+      }
     }
   }
 
@@ -288,7 +298,33 @@ export class GuidedSessionController {
     this.#dispatch({ type: 'replay' });
   }
 
+  /** Audition either side of feedback without changing scoring or prompt timing. */
+  playFeedback(text: string): void {
+    const prompt = this.currentPrompt;
+    if (
+      this.#disposed ||
+      this.phase !== 'feedback' ||
+      !prompt ||
+      !text ||
+      ![prompt.spec.expectedText, this.lastAttempt?.enteredText].includes(text)
+    )
+      return;
+    this.feedbackAudioError = null;
+    this.feedbackCharacter = text;
+    this.#playPromptAudio(prompt, text, true);
+  }
+
+  #stopFeedback(): void {
+    if (this.feedbackCharacter) void this.#audioEngine.stop({ notify: false });
+    this.feedbackCharacter = null;
+    this.feedbackAudioError = null;
+  }
+
   onAudioEnded(): void {
+    if (this.feedbackCharacter) {
+      this.feedbackCharacter = null;
+      return;
+    }
     const endedAtMs = this.#clock();
     this.#dispatch({ type: 'play-end', endedAtMs });
   }
@@ -318,6 +354,7 @@ export class GuidedSessionController {
   }
 
   continue(): boolean {
+    this.#stopFeedback();
     return this.#dispatch({ type: 'continue' });
   }
 
@@ -329,18 +366,23 @@ export class GuidedSessionController {
   }
 
   resume(): void {
-    if (this.#audioEngine.isPaused()) {
+    if (this.state.pausedFromPhase === 'playing') {
+      // The state machine returns to ready, so discard the interrupted tone.
+      void this.#audioEngine.stop({ notify: false });
+    } else if (this.#audioEngine.isPaused()) {
       void this.#audioEngine.resume();
     }
     this.#dispatch({ type: 'resume' });
   }
 
   abandon(): void {
+    this.#stopFeedback();
     void this.#audioEngine.stop({ notify: false });
     this.#dispatch({ type: 'abandon' });
   }
 
   handleVisibilityChange(hidden: boolean): void {
+    if (hidden) this.#stopFeedback();
     if (hidden && (this.state.phase === 'playing' || this.state.phase === 'answering')) {
       this.pause();
     }
@@ -349,6 +391,7 @@ export class GuidedSessionController {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.feedbackCharacter = null;
 
     if (this.#audioUnsubscribe) {
       this.#audioUnsubscribe();

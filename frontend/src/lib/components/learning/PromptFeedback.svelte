@@ -1,11 +1,15 @@
 <script lang="ts">
   import { Check, X, AlertCircle, Volume2 } from '@lucide/svelte';
   import type { AttemptClassification } from '../../training/v2/types';
+  import * as m from '$lib/paraglide/messages';
+  import { acceptsSessionShortcut } from './keyboard';
 
   interface Props {
     classification: AttemptClassification;
+    isCorrect: boolean;
     expected: string;
     entered?: string;
+    playingCharacter?: string | null;
     onContinue: () => void;
     onPlayExpected?: () => void;
     onCompare?: () => void;
@@ -13,14 +17,15 @@
 
   let {
     classification,
+    isCorrect,
     expected,
     entered = '',
+    playingCharacter = null,
     onContinue = () => {},
     onPlayExpected = () => {},
     onCompare = () => {}
   }: Props = $props();
 
-  let isCorrect = $derived(classification === 'automatic' || classification === 'developing');
   let canCompare = $derived(
     !isCorrect &&
       entered !== '' &&
@@ -30,7 +35,7 @@
   );
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && acceptsSessionShortcut(event)) {
       event.preventDefault();
       onContinue();
     }
@@ -48,16 +53,22 @@
   class:is-incorrect={!isCorrect}
 >
   <div class="feedback-header">
-    {#if classification === 'automatic'}
+    {#if isCorrect && classification === 'unmeasured'}
       <div class="feedback-badge badge-good">
         <Check size={20} />
-        <span>Correct</span>
+        <span>{m.lesson_correct()}</span>
+      </div>
+      <div class="feedback-subtext">{m.lesson_warmup_feedback()}</div>
+    {:else if classification === 'automatic'}
+      <div class="feedback-badge badge-good">
+        <Check size={20} />
+        <span>{m.lesson_correct()}</span>
       </div>
       <div class="feedback-subtext">Recognized quickly</div>
     {:else if classification === 'developing'}
       <div class="feedback-badge badge-good">
         <Check size={20} />
-        <span>Correct</span>
+        <span>{m.lesson_correct()}</span>
       </div>
       <div class="feedback-subtext">Still becoming automatic</div>
     {:else if classification === 'incorrect'}
@@ -93,9 +104,14 @@
         class="btn-ghost"
         onclick={onPlayExpected}
         aria-label={`Hear ${expected}`}
+        aria-pressed={playingCharacter === expected}
       >
         <Volume2 size={18} />
-        <span>Hear {expected}</span>
+        <span
+          >{playingCharacter === expected
+            ? m.lesson_playing_character({ character: expected })
+            : `Hear ${expected}`}</span
+        >
       </button>
 
       {#if canCompare}
@@ -206,5 +222,9 @@
     gap: var(--space-3);
     margin-top: var(--space-2);
     width: 100%;
+  }
+
+  .feedback-actions button {
+    min-height: var(--answer-target-min, 3rem);
   }
 </style>

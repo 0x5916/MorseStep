@@ -66,6 +66,7 @@
 
 .navbar-brand {
   display: flex;
+  min-height: var(--nav-control-height);
   align-items: center;
   gap: 0.5rem;
   /* Pads the wordmark up to a comfortable target; the negative margin keeps the
@@ -96,7 +97,7 @@
   display: none;
 }
 
-@media (min-width: 640px) {
+@media (min-width: 800px) {
   .navbar-right.navbar-desktop {
     display: flex;
   }
@@ -224,6 +225,7 @@
 
 .user-dropdown-item {
   display: flex;
+  min-height: var(--nav-control-height);
   align-items: center;
   gap: 0.5rem;
   width: 100%;
@@ -288,7 +290,7 @@
     transform var(--transition-base) var(--ease-smooth);
 }
 
-@media (max-width: 639px) {
+@media (max-width: 799px) {
   .bottom-nav {
     display: flex;
   }
@@ -303,7 +305,7 @@
     transform: translateY(100%);
   }
 
-  /* The top bar is desktop-only: phones navigate from the tab bar and the
+  /* Narrow screens navigate from the tab bar and the
      "More" page. Content takes over the notch padding the navbar used to hold. */
   .navbar {
     display: none;
@@ -413,8 +415,8 @@
   text-decoration: underline;
 }
 
-@media (max-width: 639px) {
-  /* Hide the footer on phones; the fixed bottom nav already labels the app */
+@media (max-width: 799px) {
+  /* The fixed bottom nav already labels the app on narrow screens. */
   .footer {
     display: none;
   }

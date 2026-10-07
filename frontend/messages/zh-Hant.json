@@ -49,6 +49,11 @@
   "home_reassurance": "免費使用。無需帳號。引導課程的進度儲存在這台裝置上。",
   "home_preview_title": "你的第一課",
   "home_preview_caption": "聆聽聲音，辨識字元，每次作答後都能獲得回饋。",
+  "home_sample_play": "聆聽 {character}",
+  "home_sample_stop": "停止播放 {character}",
+  "home_sample_playing": "正在播放 {character}…",
+  "home_sample_hint": "選擇一個字元，聆聽它的聲音。",
+  "home_sample_error": "聲音無法播放。請重試，或繼續學習課程。",
   "home_steps_title": "使用方式",
   "home_step1_title": "聆聽",
   "home_step1_body": "從兩個字元開始，以你的目標速度聆聽每個字元。",
@@ -384,5 +389,13 @@
   "learn_status_unmeasured": "尚未評估",
   "learn_practice_hint": "想自行選擇字元，或練習更長的文章？",
   "learn_practice_cta": "查看練習模式",
-  "learn_next_recommendation": "建議練習"
+  "learn_next_recommendation": "建議練習",
+
+  "lesson_correct": "正確",
+  "lesson_warmup_feedback": "暖身題 — 不測量辨識速度。",
+  "lesson_answer_label": "輸入答案",
+  "lesson_type_character": "輸入一個字元，答案會自動提交。",
+  "lesson_type_group": "輸入 {count} 個字元，輸入完整後答案會自動提交。",
+  "lesson_playing_character": "正在播放 {character}…",
+  "lesson_feedback_audio_error": "無法播放聲音，請再次點擊播放按鈕。"
 }

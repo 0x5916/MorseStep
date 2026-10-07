@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
   import { localizedHref } from '$lib/i18n.svelte';
   import { createWebAudioEngine } from '$lib/audio/engine';
@@ -17,25 +17,38 @@
   import PromptFeedback from '$lib/components/learning/PromptFeedback.svelte';
   import ContrastRepair from '$lib/components/learning/ContrastRepair.svelte';
   import SessionResult from '$lib/components/learning/SessionResult.svelte';
+  import * as m from '$lib/paraglide/messages';
+  import { LESSONS } from '$lib/training/sequence';
 
   let controller = $state<GuidedSessionController | null>(null);
   let db = $state<IDBDatabase | null>(null);
   let comparingContrast = $state(false);
   let onVisibility: (() => void) | null = null;
+  let initialization = 0;
+  let destroyed = false;
+  let sessionStep: number | null = null;
 
   let step = $derived.by(() => {
     if (!browser) return 1;
     const s = page.url.searchParams.get('step');
     const parsed = s ? parseInt(s, 10) : 1;
-    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+    return Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, LESSONS.length) : 1;
   });
 
-  onMount(async () => {
+  async function startSession(requestedStep: number) {
+    const generation = ++initialization;
+    sessionStep = requestedStep;
+    if (controller && controller.phase !== 'complete') controller.abandon();
+    controller?.dispose();
+    controller = null;
+    comparingContrast = false;
     try {
-      const database = await openTrainingDb();
+      const database = db ?? (await openTrainingDb());
+      if (destroyed || generation !== initialization) {
+        if (database !== db) database.close();
+        return;
+      }
       db = database;
-
-      const engine = createWebAudioEngine();
 
       const attemptRepo = createAttemptRepository(database);
       const sessionRepo = createSessionRepository(database);
@@ -45,10 +58,11 @@
         new Date(Date.now() - 30 * 86400000).toISOString(),
         new Date().toISOString()
       );
+      if (destroyed || generation !== initialization) return;
 
       const ctrl = new GuidedSessionController({
-        step,
-        audioEngine: engine,
+        step: requestedStep,
+        audioEngine: createWebAudioEngine(),
         attemptRepo,
         sessionRepo,
         allHistoricalAttempts: recentAttempts
@@ -56,17 +70,24 @@
 
       controller = ctrl;
       await ctrl.start();
-
-      onVisibility = () => {
-        ctrl.handleVisibilityChange(document.hidden);
-      };
-      document.addEventListener('visibilitychange', onVisibility);
     } catch (err) {
       console.error('Failed to initialize guided session:', err);
     }
+  }
+
+  onMount(() => {
+    void startSession(step);
+    onVisibility = () => controller?.handleVisibilityChange(document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+  });
+
+  afterNavigate(() => {
+    if (sessionStep !== null && sessionStep !== step) void startSession(step);
   });
 
   onDestroy(() => {
+    destroyed = true;
+    initialization += 1;
     if (onVisibility && typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibility);
       onVisibility = null;
@@ -114,7 +135,7 @@
   }
 
   function handleRepeatLesson() {
-    void goto(localizedHref(`/morse/learn/session?step=${step}`));
+    void startSession(step);
   }
 </script>
 
@@ -131,7 +152,7 @@
     currentPromptIndex={controller.currentPromptIndex}
     totalPrompts={controller.totalPrompts}
     isPaused={controller.phase === 'paused'}
-    canPause={controller.phase !== 'complete' && controller.phase !== 'abandoned'}
+    canPause={['introducing', 'ready', 'playing', 'answering', 'paused'].includes(controller.phase)}
     onExit={handleExit}
     onPauseToggle={handlePauseToggle}
   >
@@ -153,17 +174,20 @@
       <ContrastRepair
         charA={controller.currentPrompt.spec.expectedText}
         charB={controller.lastAttempt.enteredText}
-        onPlayA={() => controller?.play()}
-        onPlayB={() => {}}
-        onContinue={() => (comparingContrast = false)}
+        playingCharacter={controller.feedbackCharacter}
+        onPlayA={() => controller?.playFeedback(controller.currentPrompt!.spec.expectedText)}
+        onPlayB={() => controller?.playFeedback(controller.lastAttempt!.enteredText)}
+        onContinue={handleContinue}
       />
     {:else if controller.phase === 'feedback' && controller.lastAttempt && controller.currentPrompt}
       <PromptFeedback
         classification={controller.lastAttempt.classification}
+        isCorrect={controller.lastAttempt.isCorrect}
+        playingCharacter={controller.feedbackCharacter}
         expected={controller.currentPrompt.spec.expectedText}
         entered={controller.lastAttempt.enteredText}
         onContinue={handleContinue}
-        onPlayExpected={() => controller?.play()}
+        onPlayExpected={() => controller?.playFeedback(controller.currentPrompt!.spec.expectedText)}
         onCompare={() => (comparingContrast = true)}
       />
     {:else if controller.currentPrompt}
@@ -171,6 +195,7 @@
         <AudioPrompt
           phase={controller.phase}
           replayCount={controller.replayCount}
+          audioError={controller.state.audioError}
           isIntro={controller.currentPrompt.spec.kind === 'introduction'}
           introCharacter={controller.currentPrompt.spec.expectedText}
           onPlay={() => controller?.play()}
@@ -195,13 +220,18 @@
             onSelect={(ch) => handleSubmitAnswer(ch, 'grid')}
           />
         {:else}
-          <AnswerInput
-            disabled={controller.phase !== 'answering'}
-            expectedLength={controller.currentPrompt.spec.expectedText.length}
-            onSubmit={(text, mode) => handleSubmitAnswer(text, mode)}
-          />
+          {#key controller.currentPrompt.id}
+            <AnswerInput
+              disabled={controller.phase !== 'answering'}
+              expectedLength={controller.currentPrompt.spec.expectedText.length}
+              onSubmit={(text, mode) => handleSubmitAnswer(text, mode)}
+            />
+          {/key}
         {/if}
       </div>
+    {/if}
+    {#if controller.feedbackAudioError}
+      <p role="alert">{m.lesson_feedback_audio_error()}</p>
     {/if}
   </SessionShell>
 {/if}

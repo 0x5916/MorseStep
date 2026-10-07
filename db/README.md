@@ -4,6 +4,8 @@
 
 Configuration defaults live in [example.env](../example.env); deployment steps live in [DEPLOYMENT.md](../DEPLOYMENT.md#postgresql-resource-tuning). Validate values with `make check` before recreating the container.
 
+The tuner implements OpenCW's own web/OLTP heuristics. Several memory ratios match [PGTune's calculator](https://github.com/le0pard/pgtune/blob/master/src/features/configuration/configurationSlice.js), but the `work_mem` formula, WAL sizing, worker rules, and clamps differ. It does not run PGTune or reproduce every setting from the website; the formulas below describe this repository's behavior.
+
 ## Budget detection
 
 Memory uses the first valid source: `POSTGRES_MEMORY_LIMIT`, cgroup v2 `memory.max`, cgroup v1 `memory.limit_in_bytes`, then `POSTGRES_HOST_MEMORY_SHARE` percent of `/proc/meminfo` memory, capped at 4 GiB. Automatic tuning requires a memory budget of at least 512 MiB; smaller budgets fail before PostgreSQL starts. Leading zeros in numeric values are decimal. The default host share is 50%; it applies only to that fallback, not to declared or cgroup limits.
@@ -46,7 +48,7 @@ The script also supplies fixed `checkpoint_completion_target=0.9`, `default_stat
 | `POSTGRES_TUNE_EXTRA`                         | Extra server arguments appended last, such as `-c work_mem=32MB`             |
 | `POSTGRES_TUNE_DISABLE=1`                     | Skip derived tuning and use image defaults                                   |
 
-Prefer adjusting the budget when several settings should scale together. Keep shared memory below the container memory limit: `/dev/shm` counts toward that limit. A shared-memory warning can indicate parallel queries need more space or fewer workers. Keep the server connection ceiling above the backend pool plus administration and backup connections.
+Prefer adjusting the budget when several settings should scale together. `POSTGRES_SHM_SIZE` sets Docker's [`shm_size`](https://docs.docker.com/reference/compose-file/services/#shm_size), the `/dev/shm` capacity; it is separate from PostgreSQL's automatically derived `shared_buffers` and is not a tuner output. Keep shared memory below the container memory limit: `/dev/shm` counts toward that limit. A shared-memory warning can indicate parallel queries need more space or fewer workers. Keep the server connection ceiling above the backend pool plus administration and backup connections.
 
 Command-line settings override configuration-file values, including `ALTER SYSTEM`. Persistent overrides belong in the environment, not edits to `PGDATA`. Run `docker compose up -d db` after configuration changes; a plain restart does not load a changed Compose environment. Malformed tuning input warns and falls back; a missing image entrypoint is fatal.
 

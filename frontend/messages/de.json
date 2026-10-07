@@ -49,6 +49,11 @@
   "home_reassurance": "Kostenlos nutzbar. Kein Konto nötig. Dein Fortschritt in den angeleiteten Lektionen bleibt auf diesem Gerät.",
   "home_preview_title": "Deine erste Lektion",
   "home_preview_caption": "Höre zu, erkenne das Zeichen und erhalte nach jeder Antwort Feedback.",
+  "home_sample_play": "Höre dir {character} an",
+  "home_sample_stop": "Wiedergabe von {character} stoppen",
+  "home_sample_playing": "{character} wird abgespielt…",
+  "home_sample_hint": "Wähle ein Zeichen, um seinen Klang zu hören.",
+  "home_sample_error": "Der Ton konnte nicht abgespielt werden. Versuche es erneut oder gehe zu den Lektionen.",
   "home_steps_title": "So funktioniert es",
   "home_step1_title": "Zuhören",
   "home_step1_body": "Beginne mit zwei Zeichen und höre jedes in deinem Zieltempo.",
@@ -384,5 +389,13 @@
   "learn_status_unmeasured": "Noch nicht bewertet",
   "learn_practice_hint": "Möchtest du eigene Zeichen wählen oder einen längeren Text üben?",
   "learn_practice_cta": "Übungen entdecken",
-  "learn_next_recommendation": "Empfohlene Übung"
+  "learn_next_recommendation": "Empfohlene Übung",
+
+  "lesson_correct": "Richtig",
+  "lesson_warmup_feedback": "Aufwärmaufgabe — die Erkennungsgeschwindigkeit wird nicht gemessen.",
+  "lesson_answer_label": "Antwort eingeben",
+  "lesson_type_character": "Gib ein Zeichen ein. Deine Antwort wird automatisch gesendet.",
+  "lesson_type_group": "Gib {count} Zeichen ein. Deine Antwort wird automatisch gesendet, sobald sie vollständig ist.",
+  "lesson_playing_character": "{character} wird abgespielt…",
+  "lesson_feedback_audio_error": "Der Ton konnte nicht abgespielt werden. Versuche es erneut mit einer Wiedergabetaste."
 }

@@ -2,23 +2,109 @@
 
 Deploy the root [Compose stack](docker-compose.yaml) on a Linux host. Use this procedure for installation and recovery, [scripts/README.md](scripts/README.md) for command flags, [example.env](example.env) for configuration defaults, and [db/README.md](db/README.md) for database tuning. Image versions live in Compose.
 
+For a newly created Proxmox LXC, begin with [Fresh LXC setup](#fresh-lxc-setup), then follow [Clone and configure](#clone-and-configure) and [Build and verify](#build-and-verify). A host with Docker already installed can start at cloning.
+
 ## Requirements
 
 Use Docker with Compose v2, Bash 4 or newer, Git, Make, gzip, and curl or wget; OpenSSL generates secrets. The scripts require GNU host utilities, so run them on the deployment host. Enable Docker at boot and reserve space for database data, images, and retained backups.
 
 The shipped bindings expose the database at `${DB_PORT:-5432}`, backend at `8080`, and frontend at `3000` on every interface. pgAdmin binds only to `127.0.0.1:${PGADMIN_PORT:-5050}`. Restrict database and application ports with your firewall or loopback bindings when a tunnel or local proxy supplies public access. Retain the loopback mappings used by health probes.
 
-## Clone and configure
+## Fresh LXC setup
 
-Clone the complete repository; Compose bind-mounts [db/tune.sh](db/tune.sh), so the Compose file alone is insufficient. Run commands from the checkout root.
+Start with the container you already created from a **Debian LXC image/template** in Proxmox. This walkthrough covers an **unprivileged Debian 12 (Bookworm) or Debian 13 (Trixie) LXC**, the releases supported by [Docker's Debian installer](https://docs.docker.com/engine/install/debian/#os-requirements). The repository setup below reads the release codename from your image automatically.
+
+All shell commands after the Proxmox step run as **root inside the LXC**, using its Console or `pct enter`. Docker builds supply the application's Node and Go runtimes; you do not need to install them in the LXC.
+
+### 1. Prepare the container on Proxmox
+
+For a small initial deployment, an example allocation is **4 CPU cores, 8 GiB RAM, and a 32 GiB root disk**. This is a starting allocation, not a capacity guarantee: image builds need temporary memory and disk space, and data/backups need room to grow. Give the container a stable LAN address, gateway, and working DNS.
+
+With the container stopped, open **Options → Features** in Proxmox and enable **Nesting** and **keyctl**. Enable **Start at boot** in Options. These features allow nested containers and the keyctl system call used by Docker in an unprivileged LXC; see the [Proxmox feature definitions](https://github.com/proxmox/pve-container/blob/master/src/PVE/LXC/Config.pm).
+
+Alternatively, run the following **on the Proxmox host**. Replace `123` with your newly created, stopped container's ID. The `--features` argument sets the feature list; retain any other enabled feature flags if the container already has them.
 
 ```bash
+CT_ID=123
+pct config "$CT_ID"
+pct set "$CT_ID" --features nesting=1,keyctl=1 --onboot 1
+pct start "$CT_ID"
+pct enter "$CT_ID"
+```
+
+You are now inside the LXC. Nested Docker compatibility depends on the Proxmox host's kernel and container configuration. The Docker smoke test below is the checkpoint before installing MorseStep. Proxmox recommends a QEMU VM when stronger isolation or live migration is required; see its [container guide](https://github.com/proxmox/pve-docs/blob/master/pct.adoc).
+
+### 2. Install the host tools inside the LXC
+
+```bash
+cat /etc/os-release
+apt-get update
+apt-get upgrade -y
+apt-get install -y ca-certificates curl git make openssl nano \
+  bash coreutils findutils gzip iproute2
+ip -brief address
+getent hosts download.docker.com
+```
+
+In `/etc/os-release`, confirm `ID=debian` and either `VERSION_ID="12"` / `VERSION_CODENAME=bookworm` or `VERSION_ID="13"` / `VERSION_CODENAME=trixie`. Note the LXC's LAN IP. If your template uses another release, check Docker's supported releases before continuing; do not point an older Debian installation at the Trixie repository. If package downloads or name resolution fail, fix the container's network/DNS settings in Proxmox.
+
+### 3. Install Docker Engine and Compose
+
+Set up the official Docker APT repository for this fresh Debian installation, following [Docker's Debian guide](https://docs.docker.com/engine/install/debian/#install-using-the-apt-repository):
+
+```bash
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg \
+  -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+cat > /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+systemctl is-active docker
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+Continue when the service reports `active`, Compose prints its version, and the test container prints its success message. If Docker fails, inspect `systemctl status docker` and `journalctl -u docker --no-pager -n 100`; check the LXC features and host configuration before building the application.
+
+### 4. Prepare persistent database storage
+
+```bash
+install -d -m 0700 /data/postgres
+findmnt -T /data/postgres
+df -h / /data/postgres
+```
+
+On a fresh container, `/data/postgres` is a directory on its persistent root disk. If using a separate disk or Proxmox mount point, attach it before this step and confirm `findmnt` reports the intended filesystem. Set `POSTGRES_DATA_PATH` to the path visible **inside the LXC**. External bind mounts can need ownership mapping for an unprivileged container; resolve write-permission errors before deployment.
+
+Proxmox backups exclude host bind-mount contents; enable the backup option for additional managed storage mount points and keep the SQL backups described below. See [Proxmox mount-point backup behavior](https://github.com/proxmox/pve-docs/blob/master/pct.adoc#backup-of-container-mount-points).
+
+## Clone and configure
+
+Inside the LXC, clone the complete repository into `/opt/opencw`; Compose bind-mounts [db/tune.sh](db/tune.sh), so the Compose file alone is insufficient. Run all subsequent commands from the checkout root. If you already have a checkout and `.env`, use those rather than copying over your configuration.
+
+```bash
+git clone https://github.com/0x5916/OpenCW.git /opt/opencw
+cd /opt/opencw
 cp example.env .env
 chmod 600 .env
 openssl rand -base64 32
+nano .env
 ```
 
-Paste the generated value into `JWT_SECRET` and fill the required values below. Keep `.env` out of Git and do not source it as shell code; values such as the sender address contain spaces.
+Paste the generated value into `JWT_SECRET` and fill the required values below. In Nano, save with **Ctrl+O**, confirm with **Enter**, then exit with **Ctrl+X**. Keep `.env` out of Git and do not source it as shell code; values such as the sender address contain spaces.
 
 | Configuration | Required values and meaning                                                                                                                            |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -31,6 +117,31 @@ Paste the generated value into `JWT_SECRET` and fill the required values below. 
 
 Set explicit database resource limits on a shared or nested host; see [PostgreSQL resource tuning](#postgresql-resource-tuning). Review optional ports, HTTP timeouts, connection pool settings, and tunnel values in [example.env](example.env), then run `make check`.
 
+For an initial **LAN installation**, replace the following values in `.env`. This example assumes the LXC is `192.168.1.50` with the 4-core/8-GiB allocation above; substitute its actual IP. These are settings to edit, not commands to run:
+
+```dotenv
+POSTGRES_DATA_PATH=/data/postgres
+POSTGRES_MEMORY_LIMIT=2g
+POSTGRES_CPU_LIMIT=2
+POSTGRES_SHM_SIZE=256mb
+PUBLIC_API_BASE=http://192.168.1.50:8080/v1
+CORS_ORIGINS=http://192.168.1.50:3000
+```
+
+The database budget leaves room for the backend, pgAdmin, and builds; adjust it for your allocation. The entrypoint automatically calculates PostgreSQL settings such as `shared_buffers`, `work_mem`, and worker counts from this budget. You do not need to paste PGTune's calculated settings into `.env`; see [the tuner formulas and PGTune comparison](db/README.md).
+
+`POSTGRES_SHM_SIZE=256mb` is a manual Docker `/dev/shm` capacity in this example, separate from the calculated `shared_buffers`. It overrides the `2gb` default in [example.env](example.env) to keep that capacity below the example's `2g` database memory budget. The tuner checks the available capacity and warns when it may be insufficient; it does not resize it. Adjust this capacity for your parallel-query workload.
+
+Fill `POSTGRES_PASSWORD`, `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD`, `JWT_SECRET`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` as well. Use separate database and pgAdmin passwords, your Resend API key, and a sender configured in Resend.
+
+`PUBLIC_API_BASE` must be reachable from the computer opening the website. Browser `localhost` means that computer, not the LXC; `backend` is only a Docker-network hostname. Replace the sample's public OpenCW API URL before building your own installation. For HTTPS/public access, use the hostnames described in [Public access](#public-access) instead of the LAN URLs.
+
+```bash
+make check
+```
+
+Proceed when validation exits successfully. It checks configuration values; Docker container startup and browser connectivity are verified next.
+
 ## Build and verify
 
 ```bash
@@ -41,7 +152,38 @@ make backup
 
 Deployment can bootstrap `.env` and generate a missing JWT secret, but required credentials still need values. It builds the images, waits for database/backend/frontend/pgAdmin container health, and probes backend and frontend HTTP endpoints. A failed pgAdmin HTTP probe warns. `make status` additionally treats an unhealthy or missing pgAdmin container as a failure; its pgAdmin HTTP probe and tunnel problems are warnings.
 
+The [frontend image](frontend/Dockerfile) runs `npm run verify` before building. The current checkout's IndexedDB tests import `fake-indexeddb`, which is not declared in [frontend/package.json](frontend/package.json); a clean image build can fail at that gate until the dependency manifest and lockfile are corrected. Fix the dependency in the repository before deployment; the LXC's Docker installation does not supply frontend test packages.
+
 Local endpoints are frontend `http://127.0.0.1:3000`, health `http://127.0.0.1:8080/v1/health`, and pgAdmin `http://127.0.0.1:5050` unless its port changed. `pgadmin-config` exits after rendering configuration; exit 0 is expected.
+
+From **inside the LXC**, check the running services and local endpoints:
+
+```bash
+docker compose ps -a
+curl --fail http://127.0.0.1:8080/v1/health
+curl --fail --head http://127.0.0.1:3000/
+```
+
+Then open `http://192.168.1.50:3000` from another computer on the LAN, using your LXC's actual IP. Confirm the homepage loads, guided training plays audio, and the browser can reach `http://192.168.1.50:8080/v1/health`. Account/email features also need the configured backend and Resend credentials. Port 5050 is loopback-only, so the LAN IP will not expose pgAdmin; use the protected tunnel described below or an SSH forward to the LXC if SSH is configured.
+
+For LAN-only use with no tunnel token, stop the unused tunnel after deployment:
+
+```bash
+docker compose stop cloudflared
+```
+
+Deploy/update starts it again with the stack, so repeat this step while using LAN-only access. Protect the published ports with the Proxmox/upstream firewall, allowing 3000 and 8080 only from the intended LAN clients and keeping 5432 private. Docker-published ports can bypass an in-container UFW firewall; see [Docker's firewall limitations](https://docs.docker.com/engine/install/debian/#firewall-limitations).
+
+If this first installation fails, use the matching checkpoint:
+
+| Symptom                                              | Check                                                                                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `apt-get update` or image pulls cannot resolve hosts | LXC IP, gateway, DNS, and outbound network access.                                                                         |
+| Docker cannot start a test container                 | Nesting/keyctl, `journalctl -u docker`, and the Proxmox host's container/kernel configuration.                             |
+| A build is killed or reports no space                | LXC memory allocation and free space for image layers/builds; increase resources before retrying.                          |
+| Database fails to initialize or write its data       | `docker compose logs --tail=100 db`, the storage mount, permissions, and explicit database limits.                         |
+| Backend keeps restarting                             | `docker compose logs --tail=100 backend` and the required values listed above.                                             |
+| Homepage loads but account/API requests fail         | Browser-reachable `PUBLIC_API_BASE`, matching `CORS_ORIGINS`, and access to port 8080; rebuild after changing the API URL. |
 
 ## Public access
 
