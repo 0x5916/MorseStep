@@ -14,7 +14,12 @@ services:
       # and the "PostgreSQL resource tuning" section of DEPLOYMENT.md.
       POSTGRES_MEMORY_LIMIT: ${POSTGRES_MEMORY_LIMIT:-0}
       POSTGRES_CPU_LIMIT: ${POSTGRES_CPU_LIMIT:-0}
-      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-100}
+      POSTGRES_TUNE_MODE: ${POSTGRES_TUNE_MODE:-}
+      POSTGRES_TUNE_PROFILE: ${POSTGRES_TUNE_PROFILE:-}
+      POSTGRES_TUNE_STORAGE: ${POSTGRES_TUNE_STORAGE:-}
+      POSTGRES_TUNE_DB_SIZE: ${POSTGRES_TUNE_DB_SIZE:-}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-}
+      POSTGRES_SHM_SIZE: ${POSTGRES_SHM_SIZE:-${OPENCW_POSTGRES_SHM_SIZE:-2gb}}
       POSTGRES_HOST_MEMORY_SHARE: ${POSTGRES_HOST_MEMORY_SHARE:-50}
       POSTGRES_TUNE_DISABLE: ${POSTGRES_TUNE_DISABLE:-0}
       POSTGRES_TUNE_EXTRA: ${POSTGRES_TUNE_EXTRA:-}
@@ -30,6 +35,10 @@ services:
         source: ./db/tune.sh
         target: /usr/local/bin/opencw-pg-tune.sh
         read_only: true
+      - type: bind
+        source: ./db/pgtune.sh
+        target: /usr/local/bin/pgtune.sh
+        read_only: true
     # The tuner derives the settings and then hands off to the image's own entrypoint,
     # so initdb, pg_hba.conf and /docker-entrypoint-initdb.d behave exactly as before.
     entrypoint: ["/bin/sh", "/usr/local/bin/opencw-pg-tune.sh"]
@@ -40,7 +49,8 @@ services:
     # Keep shm_size below the memory limit: /dev/shm is charged to the memory limit.
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-0}
     cpus: ${POSTGRES_CPU_LIMIT:-0}
-    shm_size: ${POSTGRES_SHM_SIZE:-2gb}
+    # Operational scripts calculate the PGTune-mode capacity before creation.
+    shm_size: ${POSTGRES_SHM_SIZE:-${OPENCW_POSTGRES_SHM_SIZE:-2gb}}
     # Cap the log files. Nothing else truncates them and they live in Docker's data root,
     # so an unattended host would otherwise fill its disk. 10 MB x 3 per container.
     logging:

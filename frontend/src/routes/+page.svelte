@@ -120,57 +120,55 @@
       <a href={href('/morse/learn')} class="btn-cta"
         >{m.home_cta()}<ArrowRight size={18} aria-hidden="true" /></a
       >
-      <a href={href('/morse/practice')} class="link practice-link">{m.home_hero_cta_secondary()}</a>
+      <a href={href('/morse/practice')} class="btn-ghost practice-link"
+        >{m.home_hero_cta_secondary()}</a
+      >
     </div>
+    <!-- This is a sound introduction, not an assessed recognition prompt. -->
+    <figure class="preview-frame" aria-labelledby="home-preview-title">
+      <div class="preview-heading">
+        <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
+        <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
+      </div>
+      <div class="preview-chars">
+        {#each previewChars as char (char)}
+          <button
+            type="button"
+            class="preview-char"
+            aria-label={sampleCharacter === char
+              ? m.home_sample_stop({ character: char })
+              : m.home_sample_play({ character: char })}
+            aria-pressed={sampleCharacter === char}
+            onclick={() => playSample(char)}
+          >
+            <span class="sample-letter">{char}</span>
+            <span class="sample-action">
+              {#if sampleCharacter === char}<Square size={16} aria-hidden="true" />{:else}<Play
+                  size={16}
+                  aria-hidden="true"
+                />{/if}
+              {sampleCharacter === char ? m.player_stop() : m.home_step1_title()}
+            </span>
+          </button>
+        {/each}
+      </div>
+      <p class="sample-status body-text" aria-live="polite" aria-atomic="true">
+        {sampleCharacter
+          ? m.home_sample_playing({ character: sampleCharacter })
+          : m.home_sample_hint()}
+      </p>
+      {#if sampleError}<p class="sample-error body-text" role="alert">
+          {m.home_sample_error()}
+        </p>{/if}
+    </figure>
     <p class="body-text reassurance">{m.home_reassurance()}</p>
   </div>
 </section>
 
 <div class="learning-intro">
-  <!-- This is a sound introduction, not an assessed recognition prompt. -->
-  <figure class="preview-frame" aria-labelledby="home-preview-title">
-    <div class="preview-heading">
-      <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
-      <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
-    </div>
-    <div class="preview-chars">
-      {#each previewChars as char (char)}
-        <button
-          type="button"
-          class="preview-char"
-          aria-label={sampleCharacter === char
-            ? m.home_sample_stop({ character: char })
-            : m.home_sample_play({ character: char })}
-          aria-pressed={sampleCharacter === char}
-          onclick={() => playSample(char)}
-        >
-          <span class="sample-letter">{char}</span>
-          <span class="sample-action">
-            {#if sampleCharacter === char}<Square size={16} aria-hidden="true" />{:else}<Play
-                size={16}
-                aria-hidden="true"
-              />{/if}
-            {sampleCharacter === char ? m.player_stop() : m.home_step1_title()}
-          </span>
-        </button>
-      {/each}
-    </div>
-    <p class="sample-status body-text" aria-live="polite" aria-atomic="true">
-      {sampleCharacter
-        ? m.home_sample_playing({ character: sampleCharacter })
-        : m.home_sample_hint()}
-    </p>
-    {#if sampleError}<p class="sample-error body-text" role="alert">{m.home_sample_error()}</p>{/if}
-    <figcaption class="preview-caption">
-      <p class="body-text">{m.home_preview_caption()}</p>
-      <a href={href('/morse/learn')} class="link preview-link"
-        >{m.home_cta()}<ArrowRight size={16} aria-hidden="true" /></a
-      >
-    </figcaption>
-  </figure>
-
   <section class="method" aria-labelledby="home-method-title">
     <h2 id="home-method-title" class="section-title">{m.home_steps_title()}</h2>
+    <p class="body-text method-intro">{m.home_preview_caption()}</p>
     <ol class="step-list">
       {#each steps as step, index (step.title)}
         <li class="step">
@@ -229,12 +227,12 @@
     isolation: isolate;
     display: grid;
     justify-items: center;
-    gap: var(--space-6);
+    gap: var(--space-4);
   }
 
   .masthead-copy {
     min-width: 0;
-    max-width: 34rem;
+    max-width: 36rem;
     text-align: center;
   }
 
@@ -253,7 +251,7 @@
   }
 
   .key-artwork {
-    width: 12rem;
+    width: 10rem;
     margin-inline: auto;
   }
 
@@ -265,7 +263,7 @@
   .masthead-title {
     margin: 0 auto;
     max-width: 14ch;
-    font-size: clamp(var(--text-3xl), 5.5vw, 4.5rem);
+    font-size: clamp(var(--text-3xl), 5vw, 3.75rem);
     line-height: var(--leading-tight);
     font-weight: 600;
     letter-spacing: -0.02em;
@@ -274,7 +272,7 @@
   }
 
   .masthead-lede {
-    margin: var(--space-4) 0 var(--space-5);
+    margin: var(--space-3) 0 var(--space-5);
     font-size: var(--text-lg);
     line-height: var(--leading-relaxed);
     color: var(--text-secondary);
@@ -294,8 +292,13 @@
   }
 
   .practice-link {
-    display: inline-flex;
-    align-items: center;
+    font-size: var(--text-base);
+    padding-inline: var(--space-5);
+    background-color: transparent;
+  }
+
+  .practice-link:hover {
+    border-color: var(--accent);
   }
 
   .reassurance {
@@ -303,9 +306,6 @@
   }
 
   .learning-intro {
-    display: grid;
-    align-items: start;
-    gap: var(--space-8);
     margin-top: var(--home-section-gap);
   }
 
@@ -313,12 +313,14 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    gap: var(--space-4);
-    margin: 0;
-    padding: var(--space-6);
+    gap: var(--space-3);
+    max-width: 28rem;
+    margin: var(--space-5) auto 0;
+    padding: var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background-color: var(--bg-inset);
+    text-align: left;
   }
 
   .preview-heading {
@@ -352,11 +354,12 @@
   .preview-char {
     display: flex;
     flex: 1;
-    flex-direction: column;
+    justify-content: center;
     align-items: center;
     gap: var(--space-2);
     min-width: var(--answer-target-min);
-    padding: var(--space-4) var(--space-3);
+    min-height: var(--answer-target-min);
+    padding: var(--space-2) var(--space-3);
     text-align: center;
     border: 1px solid var(--border-control);
     border-radius: var(--radius-xs);
@@ -372,12 +375,11 @@
 
   .sample-letter {
     font-family: var(--font-mono);
-    font-size: var(--text-3xl);
+    font-size: var(--text-2xl);
     line-height: var(--leading-tight);
   }
 
-  .sample-action,
-  .preview-link {
+  .sample-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -395,22 +397,6 @@
     color: var(--status-bad);
   }
 
-  .preview-link {
-    justify-content: space-between;
-    min-height: var(--answer-target-min);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
-  }
-
-  .preview-caption {
-    display: grid;
-    gap: var(--space-4);
-  }
-
-  .preview-caption .body-text {
-    margin: 0;
-  }
-
   .method {
     min-width: 0;
   }
@@ -426,6 +412,11 @@
   .method .step-list {
     display: grid;
     gap: var(--space-6);
+  }
+
+  .method-intro {
+    margin: calc(var(--space-4) * -1) 0 var(--space-6);
+    font-size: var(--text-base);
   }
 
   .step .body-text {
@@ -532,9 +523,8 @@
       --home-section-gap: calc(var(--space-8) * 2);
     }
 
-    .learning-intro {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-      gap: calc(var(--space-6) * 2);
+    .method .step-list {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .destinations .row-list {
@@ -546,7 +536,7 @@
 
   @media (min-width: 1100px) {
     .masthead {
-      min-height: clamp(32rem, 68svh, 40rem);
+      min-height: clamp(28rem, 56svh, 34rem);
       align-items: center;
     }
 

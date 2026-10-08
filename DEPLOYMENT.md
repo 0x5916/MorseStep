@@ -115,22 +115,19 @@ Paste the generated value into `JWT_SECRET` and fill the required values below. 
 | CORS          | `CORS_ORIGINS`: comma-separated frontend origins. This is backend runtime configuration.                                                               |
 | pgAdmin       | `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD`: separate from database credentials; used to initialize its account.                               |
 
-Set explicit database resource limits on a shared or nested host; see [PostgreSQL resource tuning](#postgresql-resource-tuning). Review optional ports, HTTP timeouts, connection pool settings, and tunnel values in [example.env](example.env), then run `make check`.
+Set the database's RAM budget on a shared or nested host; see [PostgreSQL resource tuning](#postgresql-resource-tuning). The template selects PGTune's web profile; other tuning inputs remain commented until you remove their leading `#`. Review optional ports, HTTP timeouts, connection pool settings, and tunnel values in [example.env](example.env), then run `make check`.
 
 For an initial **LAN installation**, replace the following values in `.env`. This example assumes the LXC is `192.168.1.50` with the 4-core/8-GiB allocation above; substitute its actual IP. These are settings to edit, not commands to run:
 
 ```dotenv
 POSTGRES_DATA_PATH=/data/postgres
+POSTGRES_TUNE_MODE=pgtune
 POSTGRES_MEMORY_LIMIT=2g
-POSTGRES_CPU_LIMIT=2
-POSTGRES_SHM_SIZE=256mb
 PUBLIC_API_BASE=http://192.168.1.50:8080/v1
 CORS_ORIGINS=http://192.168.1.50:3000
 ```
 
-The database budget leaves room for the backend, pgAdmin, and builds; adjust it for your allocation. The entrypoint automatically calculates PostgreSQL settings such as `shared_buffers`, `work_mem`, and worker counts from this budget. You do not need to paste PGTune's calculated settings into `.env`; see [the tuner formulas and PGTune comparison](db/README.md).
-
-`POSTGRES_SHM_SIZE=256mb` is a manual Docker `/dev/shm` capacity in this example, separate from the calculated `shared_buffers`. It overrides the `2gb` default in [example.env](example.env) to keep that capacity below the example's `2g` database memory budget. The tuner checks the available capacity and warns when it may be insufficient; it does not resize it. Adjust this capacity for your parallel-query workload.
+The database budget leaves room for the backend, pgAdmin, and builds; adjust it for your allocation. The local calculator derives PostgreSQL settings without copying values from the PGTune website. CPUs are detected; uncomment `POSTGRES_CPU_LIMIT` if the database needs a smaller share. With `POSTGRES_SHM_SIZE` commented, the deployment scripts calculate `/dev/shm` capacity before creating the container; the 2-GiB budget gives 256 MiB. See [the tuning guide](db/README.md) for this separate OpenCW policy and optional overrides.
 
 Fill `POSTGRES_PASSWORD`, `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD`, `JWT_SECRET`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` as well. Use separate database and pgAdmin passwords, your Resend API key, and a sender configured in Resend.
 
@@ -138,9 +135,10 @@ Fill `POSTGRES_PASSWORD`, `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD`, `
 
 ```bash
 make check
+make tune
 ```
 
-Proceed when validation exits successfully. It checks configuration values; Docker container startup and browser connectivity are verified next.
+Proceed when validation exits successfully and the read-only preview shows the intended database budget and settings. Neither command starts PostgreSQL; Docker container startup and browser connectivity are verified next.
 
 ## Build and verify
 
@@ -238,6 +236,6 @@ Rotate the database role password with psql's `\password` prompt, update `.env`,
 
 ## PostgreSQL resource tuning
 
-The database entrypoint chooses memory from an explicit budget, cgroup limits, then host detection; automatic tuning requires at least 512 MiB. CPU sizing takes the minimum of explicit limits, cgroup quotas, effective cpuset, and available CPUs. On LXC or nested hosts the host fallback can overstate available resources, so set `POSTGRES_MEMORY_LIMIT` and `POSTGRES_CPU_LIMIT` to the database's share. These also enforce Docker limits. Keep `POSTGRES_SHM_SIZE` below the memory ceiling and leave headroom for other services.
+New installations select `POSTGRES_TUNE_MODE=pgtune` and need only a database RAM budget; the default profile is web. Existing `.env` files without a mode keep the previous OpenCW calculator. `off` selects the image defaults. Optional lines in [example.env](example.env) use `#`; remove it to override detected CPUs, connection demand, workload, storage assumptions, or shared-memory capacity.
 
-[db/README.md](db/README.md) owns the detection order, formulas, clamps, override variables, and troubleshooting. Inspect `docker compose logs db` for the selected budget before accepting a deployment. Recreate the database container to apply configuration changes; do not edit cluster files to tune it.
+[db/README.md](db/README.md) owns defaults, detection, calculations, compatibility adjustments, and troubleshooting. Preview with `make tune`, then apply changes with `make deploy` or `make update`; these scripts pass calculated shared-memory capacity to Compose. Direct `docker compose` commands do not perform that calculation. Inspect `docker compose logs db` before accepting a deployment; do not edit cluster files to tune it.

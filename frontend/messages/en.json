@@ -297,6 +297,8 @@
   "settings_language_label": "Language",
   "settings_current_lesson_label": "Current Lesson",
   "settings_cw_section": "CW Settings",
+  "settings_test_tone": "Test tone",
+  "settings_test_tone_label": "Test tone: play AAA",
   "settings_update": "Update",
   "settings_saved": "Saved!",
   "settings_saving": "Saving…",

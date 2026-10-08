@@ -41,7 +41,7 @@ _FILE := $(if $(value FILE),--file $(call shell_quote,$(value FILE)),)
 _REF := $(if $(value REF),--ref $(call shell_quote,$(value REF)),)
 _TIMEOUT := $(if $(value TIMEOUT),--timeout $(call shell_quote,$(value TIMEOUT)),)
 
-.PHONY: help check deploy update backup restore status
+.PHONY: help check tune deploy update backup restore status
 
 help:
 	@printf '%s\n' \
@@ -52,6 +52,7 @@ help:
 	  'Targets:' \
 	  '  help                     show this help (the default target)' \
 	  '  check                    validate .env and report every problem at once' \
+	  '  tune                     preview PostgreSQL settings and shared-memory capacity' \
 	  '  deploy                   build and start the stack, then wait for health' \
 	  '  update                   snapshot, back up, pull, rebuild, verify' \
 	  '  backup                   pg_dump into backups/ and rotate old dumps' \
@@ -71,6 +72,9 @@ help:
 
 check:
 	@$(SCRIPTS)/check-env.sh
+
+tune:
+	@$(SCRIPTS)/tune.sh
 
 deploy:
 	@$(SCRIPTS)/deploy.sh $(_DRY) $(_YES) $(_TIMEOUT)

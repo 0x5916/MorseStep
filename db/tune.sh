@@ -37,13 +37,13 @@
 #   4. cpuset.cpus.effective / cpuset.cpus
 #   5. nproc
 #
-# The formulas are the conventional "web/OLTP on SSD" heuristics: shared_buffers at a
+# The legacy opencw formulas are conventional "web/OLTP on SSD" heuristics: shared_buffers at a
 # quarter of the budget, the planner's cache estimate at three quarters, maintenance_work_mem
 # at a sixteenth, work_mem divided by the connection count, wal_buffers at a thirty-second of
 # shared_buffers, and parallel worker counts derived from the CPU count. Every value is
 # clamped to a sane range so that a tiny budget still produces a server that starts.
 #
-# Settings that describe the storage or the workload rather than the machine size are
+# In opencw mode, settings describing storage or workload rather than machine size are
 # deliberately left alone: checkpoint_completion_target, default_statistics_target,
 # random_page_cost, effective_io_concurrency and huge_pages. Revisit those if the backing
 # storage changes.
@@ -56,7 +56,8 @@
 #   POSTGRES_MAX_CONNECTIONS   connection ceiling. Demand-driven rather than resource-driven,
 #                              but it feeds the work_mem calculation.
 #
-# `sh tune.sh --print` prints the derived arguments and exits without starting anything.
+# `--print` previews settings; `--shm` prints only the Docker shared-memory capacity.
+# POSTGRES_TUNE_MODE selects opencw (legacy default), pgtune, or off.
 #
 # POSIX sh only: the image ships busybox ash, and this runs before the official entrypoint,
 # so no bashisms and no arrays.
@@ -444,7 +445,11 @@ compute_settings() {
 check_shared_memory() {
   csm_gather=$1
   csm_work_kb=$2
-  csm_available=$(df -m /dev/shm 2>/dev/null | awk '$NF == "/dev/shm" { print $2; exit }' || true)
+  if [ "${print_only:-0}" = 1 ]; then
+    csm_available=$SHM_MIB
+  else
+    csm_available=$(df -m /dev/shm 2>/dev/null | awk '$NF == "/dev/shm" { print $2; exit }' || true)
+  fi
   case ${csm_available:-} in
     ''|*[!0-9]*) return 0 ;;
   esac
@@ -465,23 +470,72 @@ add_setting() {
   append_arg "$1=$2"
 }
 
+# Resolve modes without changing existing installations that omit the new selector.
+resolve_mode() {
+  TUNE_MODE=${POSTGRES_TUNE_MODE:-opencw}
+  case $TUNE_MODE in opencw|pgtune|off) ;; *) die 'POSTGRES_TUNE_MODE must be opencw, pgtune or off' ;; esac
+  case ${POSTGRES_TUNE_DISABLE:-0} in
+    0|false|'') ;;
+    1|true)
+      case ${POSTGRES_TUNE_MODE:-off} in off|'') ;; *) die 'POSTGRES_TUNE_DISABLE conflicts with POSTGRES_TUNE_MODE; select off instead' ;; esac
+      TUNE_MODE=off ;;
+    *) die 'POSTGRES_TUNE_DISABLE must be 0 or 1' ;;
+  esac
+  if [ "$TUNE_MODE" = pgtune ]; then
+    MEM_MIB=$(size_to_mib "${POSTGRES_MEMORY_LIMIT:-}") || die 'PGTune requires POSTGRES_MEMORY_LIMIT, for example 2g'
+    [ "$MEM_MIB" -ge 512 ] || die 'PGTune requires a database RAM budget of at least 512 MiB'
+    MEM_SOURCE="POSTGRES_MEMORY_LIMIT=${POSTGRES_MEMORY_LIMIT}"
+    case ${POSTGRES_CPU_LIMIT:-0} in
+      *[!0-9.]*|*.*.*|.*|*.) die 'POSTGRES_CPU_LIMIT must be a CPU count such as 2 or 1.5' ;;
+    esac
+    rm_cpu_input=${POSTGRES_CPU_LIMIT:-0}
+    rm_cpu=$(decimal_number "${rm_cpu_input%%.*}") || die 'POSTGRES_CPU_LIMIT must be a CPU count such as 2 or 1.5'
+    [ "${#rm_cpu}" -le 9 ] || die 'POSTGRES_CPU_LIMIT is too large'
+  fi
+}
+
+resolve_shm() {
+  if [ -n "${POSTGRES_SHM_SIZE:-}" ]; then
+    SHM_MIB=$(size_to_mib "$POSTGRES_SHM_SIZE") || die 'POSTGRES_SHM_SIZE must be a byte size'
+    [ "$SHM_MIB" -gt 0 ] || die 'POSTGRES_SHM_SIZE must be greater than zero'
+    SHM_SIZE=$POSTGRES_SHM_SIZE
+  elif [ "$TUNE_MODE" = pgtune ]; then
+    SHM_MIB=$(clamp $(( MEM_MIB / 8 )) 64 2048)
+    SHM_SIZE="${SHM_MIB}m"
+  else
+    SHM_MIB=2048
+    SHM_SIZE=2gb
+  fi
+}
+
 # --- main -------------------------------------------------------------------
 
 TUNE_ARGS=
 print_only=0
+shm_only=0
 
 for arg in "$@"; do
   case ${arg} in
     --print) print_only=1 ;;
+    --shm) shm_only=1 ;;
     --help|-h)
-      printf 'usage: %s [--print] [postgres arguments...]\n' "$0"
+      printf 'usage: %s [--print|--shm] [postgres arguments...]\n' "$0"
       exit 0
       ;;
   esac
 done
 
-if [ "${POSTGRES_TUNE_DISABLE:-0}" = 1 ] || [ "${POSTGRES_TUNE_DISABLE:-0}" = true ]; then
-  log 'derived settings disabled by POSTGRES_TUNE_DISABLE; using the image defaults'
+resolve_mode
+resolve_shm
+if [ "$shm_only" = 1 ]; then printf '%s\n' "$SHM_SIZE"; exit 0; fi
+log "mode: ${TUNE_MODE}; Docker /dev/shm capacity: ${SHM_SIZE}"
+if [ "$TUNE_MODE" = off ]; then
+  log 'derived settings disabled; using the image defaults'
+elif [ "$TUNE_MODE" = pgtune ]; then
+  detect_cpus
+  . "$(dirname -- "$0")/pgtune.sh"
+  compute_pgtune_settings
+  check_shared_memory "$MPWG" "$WM_KB"
 else
   if detect_memory; then
     detect_cpus

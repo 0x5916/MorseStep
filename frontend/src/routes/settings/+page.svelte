@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { user } from '$lib/auth';
   import {
     saveCWSettings,
@@ -30,7 +31,7 @@
     saveClientCwSettings
   } from '$lib/cwSync';
   import { localizeApiError } from '$lib/errorLocalization';
-  import { createWebAudioEngine } from '$lib/audio/engine';
+  import { createWebAudioEngine, type AudioEngine } from '$lib/audio/engine';
   import { buildAudioPlan } from '$lib/training/timing';
   import { deleteTrainingDb } from '$lib/data/training-db';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
@@ -97,11 +98,36 @@
   let confirmClearOpen = $state(false);
   let clearSuccess = $state(false);
 
+  let toneAudio: AudioEngine | null = null;
+  const canTestTone = $derived(
+    Number.isFinite(freq) &&
+      freq >= 300 &&
+      freq <= 2000 &&
+      Number.isFinite(charWpm) &&
+      charWpm >= 5 &&
+      charWpm <= 50 &&
+      Number.isFinite(effWpm) &&
+      effWpm >= 5 &&
+      effWpm <= 50
+  );
+
+  onMount(() => {
+    toneAudio = createWebAudioEngine();
+    return () => {
+      void toneAudio?.dispose();
+      toneAudio = null;
+    };
+  });
+
   function playTestTone() {
+    if (!toneAudio || !canTestTone) return;
     try {
-      const engine = createWebAudioEngine();
-      const plan = buildAudioPlan('E', { frequency: freq, charWpm, effWpm });
-      engine.play(plan);
+      const plan = buildAudioPlan('AAA', {
+        frequency: freq,
+        charWpm,
+        effWpm: Math.min(effWpm, charWpm)
+      });
+      toneAudio.play(plan);
     } catch (err) {
       console.error('Failed to play test tone:', err);
     }
@@ -640,22 +666,30 @@
           <span class="label-text">{m.trainer_label_eff_wpm()}</span>
           <input type="number" bind:value={effWpm} min="5" max="50" class="input" />
         </label>
-        <label class="field">
-          <span class="label-text">{m.trainer_label_freq()}</span>
-          <div class="settings-input-action">
-            <input type="number" bind:value={freq} min="300" max="2000" class="input" />
+        <div class="field">
+          <label class="label-text" for="settings-frequency">{m.trainer_label_freq()}</label>
+          <div class="settings-tone-action">
+            <input
+              id="settings-frequency"
+              type="number"
+              bind:value={freq}
+              min="300"
+              max="2000"
+              class="input"
+            />
             <button
               type="button"
               class="btn-ghost"
               onclick={playTestTone}
-              title="Play test tone"
-              aria-label="Play test tone"
+              disabled={!canTestTone}
+              title={m.settings_test_tone_label()}
+              aria-label={m.settings_test_tone_label()}
             >
-              <Volume2 size={16} />
-              <span>Test tone</span>
+              <Volume2 size={16} aria-hidden="true" />
+              <span>{m.settings_test_tone()}</span>
             </button>
           </div>
-        </label>
+        </div>
         <label class="field">
           <span class="label-text">{m.trainer_label_start_delay()}</span>
           <input type="number" bind:value={startDelay} min="0" max="10" step="0.5" class="input" />
@@ -758,6 +792,19 @@
   .settings-input-action .input {
     flex: 1;
     min-width: 0;
+  }
+  .settings-tone-action {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-3);
+    align-items: stretch;
+  }
+  .settings-tone-action .input {
+    min-width: 0;
+  }
+  .settings-tone-action .btn-ghost {
+    min-height: var(--answer-target-min);
+    white-space: nowrap;
   }
   .settings-action-row {
     display: flex;

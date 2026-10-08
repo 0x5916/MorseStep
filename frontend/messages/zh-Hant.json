@@ -297,6 +297,8 @@
   "settings_language_label": "語言",
   "settings_current_lesson_label": "目前課程",
   "settings_cw_section": "CW 設定",
+  "settings_test_tone": "測試音調",
+  "settings_test_tone_label": "測試音調：播放 AAA",
   "settings_update": "更新",
   "settings_saved": "已儲存！",
   "settings_saving": "儲存中…",

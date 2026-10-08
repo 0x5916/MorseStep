@@ -11,6 +11,7 @@ Every operational Bash script accepts `--help`. Options below supplement that he
 | Script and Make target        | Options                                                                                                                         | Behavior                                                                                                                        |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `check-env.sh` / `make check` | `--quiet`, `--env-file PATH`                                                                                                    | Validates required values, formats, and optional tuning values; reports all errors; no mutations                                |
+| `tune.sh` / `make tune`       | `--env-file PATH`                                                                                                               | Previews database tuning and shared-memory capacity; no Docker or database changes                                              |
 | `deploy.sh` / `make deploy`   | `--timeout SECONDS`, `--dry-run`, `--yes`                                                                                       | Bootstraps `.env`, optionally generates JWT secret, validates, builds/starts, verifies health                                   |
 | `update.sh` / `make update`   | `--ref REF`, `--no-backup`, `--auto-rollback`, `--timeout SECONDS`, `--keep N`, `--dry-run`, `--yes`                            | Snapshots locally built images and database, changes revision, rebuilds, verifies; prints or performs image rollback on failure |
 | `backup.sh` / `make backup`   | `--keep N`, `--dir PATH`, `--no-globals`, `--print-path`, `--dry-run`                                                           | Writes verified gzip plain-SQL dump and optional globals dump; rotates retained dumps; never prompts                            |
@@ -21,6 +22,8 @@ Timeout defaults to 240 seconds per service; retention defaults to 14 dumps. `--
 
 ```bash
 make check
+make tune
+scripts/tune.sh --env-file /opt/opencw/.env
 make update DRY_RUN=1
 scripts/update.sh --ref RELEASE --auto-rollback
 scripts/backup.sh --dir /mnt/backups --keep 30
@@ -32,7 +35,7 @@ The shared [pgAdmin renderer](render-pgadmin.py) runs inside `pgadmin-config` in
 
 ## Safety and exit behavior
 
-The environment parser reads values without sourcing shell code. Dry-run prints mutating commands; read-only validation and prerequisites can still fail. Deploy/update refuse success if database/backend/frontend/pgAdmin container checks or backend/frontend HTTP probes fail; pgAdmin HTTP failure warns. Status additionally fails for a missing/unhealthy pgAdmin container or invalid environment. Cloudflared issues and old/missing backups warn without changing its exit status. Success exits 0; validation or operational failure exits nonzero.
+The environment parser reads values without sourcing shell code. Dry-run prints mutating commands; read-only validation and prerequisites can still fail. `tune.sh` needs only tuning inputs; credentials and Docker are not required. It rejects `--dry-run`/`--yes` because it never mutates state. Deploy/update refuse success if database/backend/frontend/pgAdmin container checks or backend/frontend HTTP probes fail; pgAdmin HTTP failure warns. Status additionally fails for a missing/unhealthy pgAdmin container or invalid environment. Cloudflared issues and old/missing backups warn without changing its exit status. Success exits 0; validation or operational failure exits nonzero.
 
 Update refuses a dirty tracked working tree, requires an upstream for the current branch unless `--ref` is given, and aborts if its pre-update backup fails. It records the previous revision/branch and tags locally built images. An explicit branch ref fast-forwards to its fetched upstream (or `origin/BRANCH`); divergent history is rejected. Tags and commits use detached HEAD. Automatic rollback aborts failed image retags, verifies running image IDs and health, and leaves detached HEAD; it does not reverse GORM startup migrations. Restore the pre-update database dump when schema recovery is needed. Avoid `--no-backup` unless the loss of that safeguard is deliberate.
 
@@ -55,7 +58,9 @@ Backups use credentials inside the database container, serialize publication/ret
 | `PGADMIN_PORT`                    | Probe port: process environment, then parsed environment file, then 5050                |
 | `DRY_RUN=1`, `ASSUME_YES=1`       | Environment equivalents for scripts that support the corresponding operation            |
 
-These overrides are process environment variables. The wrapper passes `ENV_FILE` to Compose with `--env-file`; exported Compose values take precedence over the file. Parsing handles quoted values, whitespace, inline comments, and CRLF without executing shell code. Dollar-containing unquoted/double-quoted values are resolved by Compose's read-only `config --environment` command; single-quoted values stay literal. `check-env.sh --env-file PATH` is a validation-only override.
+These overrides are process environment variables. The wrapper passes `ENV_FILE` to Compose with `--env-file`; exported Compose values take precedence over the file. Parsing handles quoted values, whitespace, inline comments, and CRLF without executing shell code. Tuning inputs must be literal and reject `$` interpolation, keeping their preview independent of Docker. For other inputs, dollar-containing unquoted/double-quoted values are resolved by Compose's read-only `config --environment` command; single-quoted values stay literal. `check-env.sh --env-file PATH` is a validation-only override.
+
+In PGTune mode, the wrapper supplies calculated `POSTGRES_SHM_SIZE` before Compose creates the database; an explicit value wins. Use `make tune` to preview and `make deploy`/`make update` to apply. Direct `docker compose` commands do not calculate shared memory and use their static `2gb` fallback unless the size is explicit; see [database tuning](../db/README.md#overrides-and-shared-memory).
 
 ## Scheduled runs
 

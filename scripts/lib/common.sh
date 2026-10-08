@@ -204,13 +204,22 @@ require_git_checkout() {
 # directory-derived project name stable ("opencw") no matter where the caller
 # was invoked from. Use the same environment file the scripts validate.
 compose() {
+  local shm tuning_help=''
+  # update --ref can check out a revision predating --shm while this function stays loaded.
+  if [[ -f ${ROOT_DIR}/db/tune.sh ]]; then
+    tuning_help="$(/bin/sh "${ROOT_DIR}/db/tune.sh" --help)" || return 1
+  fi
+  case ${tuning_help} in
+    *--shm*) shm="$(postgres_tune --shm)" || return 1 ;;
+    *) shm="$(env_get POSTGRES_SHM_SIZE || true)"; shm="${shm:-2gb}" ;;
+  esac
   if [[ ${DRY_RUN} == 1 ]]; then
     printf '%s[dry-run]%s (cd %s && %s)\n' \
       "${C_DIM}" "${C_RESET}" "$(_quote_cmd "${ROOT_DIR}")" \
-      "$(_quote_cmd docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@")" >&"${LOG_STREAM}"
+      "$(_quote_cmd env "OPENCW_POSTGRES_SHM_SIZE=${shm}" docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@")" >&"${LOG_STREAM}"
     return 0
   fi
-  ( cd -- "${ROOT_DIR}" && docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@" )
+  ( cd -- "${ROOT_DIR}" && OPENCW_POSTGRES_SHM_SIZE="${shm}" docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@" )
 }
 
 # Image references the Compose configuration resolves, one per line. This
@@ -273,6 +282,10 @@ env_get() {
   ' "${ENV_FILE}")" || return 1
   mode="${value%%$'\n'*}"; value="${value#*$'\n'}"
   if [[ ${mode} == expand && ${value} == *'$'* ]]; then
+    if [[ ${2:-} == literal ]]; then
+      warn "${key} tuning input must be literal; environment interpolation is not supported"
+      return 2
+    fi
     # Reuse Compose for its parameter/default expansion rather than evaluate
     # shell code or maintain a second interpolation implementation. No daemon
     # is needed for config; never log the resolved environment (it has secrets).
@@ -283,6 +296,24 @@ env_get() {
   fi
   printf '%s' "${value}"
 }
+
+# Export only tuning inputs, parsed as data. Preview, validation and Compose share this path.
+postgres_tune() (
+  local key value status
+  for key in POSTGRES_TUNE_MODE POSTGRES_MEMORY_LIMIT POSTGRES_CPU_LIMIT \
+    POSTGRES_MAX_CONNECTIONS POSTGRES_HOST_MEMORY_SHARE POSTGRES_TUNE_DISABLE \
+    POSTGRES_TUNE_EXTRA POSTGRES_SHM_SIZE POSTGRES_TUNE_PROFILE \
+    POSTGRES_TUNE_STORAGE POSTGRES_TUNE_DB_SIZE; do
+    if value="$(env_get "$key" literal)"; then
+      export "$key=$value"
+    else
+      status=$?
+      [[ ${status} == 1 ]] || return "${status}"
+      unset "$key"
+    fi
+  done
+  /bin/sh "${ROOT_DIR}/db/tune.sh" "$@"
+)
 
 # env_set <key> <value> - rewrite <key> in ${ENV_FILE}, or append it when absent.
 # Duplicate definitions collapse into a single line placed where the last one

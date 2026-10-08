@@ -164,6 +164,11 @@ case "${tune_disable}" in
   *) problems+=("POSTGRES_TUNE_DISABLE must be 0 or 1") ;;
 esac
 
+# Validate through the same calculator used at startup and by make tune.
+if ! tuning_output="$(postgres_tune --print 2>&1)"; then
+  problems+=("${tuning_output}")
+fi
+
 # --- warnings ---------------------------------------------------------------
 
 if [[ -z "$(value_of CLOUDFLARED_TUNNEL_TOKEN)" ]]; then
@@ -186,7 +191,7 @@ fi
 # start-up error. Verified on Docker 26 and Docker 29: such a container does start.
 shm_bytes="$(bytes_of "$(value_of POSTGRES_SHM_SIZE)")"
 mem_bytes="$(bytes_of "$(value_of POSTGRES_MEMORY_LIMIT)")"
-if [[ -n ${mem_bytes} && ${tune_disable} != 1 && ${tune_disable} != true ]] && (( mem_bytes > 0 && mem_bytes < 536870912 )); then
+if [[ -n ${mem_bytes} && ${tune_disable} != 1 && ${tune_disable} != true && "$(value_of POSTGRES_TUNE_MODE)" != off ]] && (( mem_bytes > 0 && mem_bytes < 536870912 )); then
   problems+=("POSTGRES_MEMORY_LIMIT must be at least 512 MiB for automatic tuning")
 fi
 if [[ -n ${shm_bytes} && -n ${mem_bytes} ]] && (( mem_bytes > 0 && shm_bytes > mem_bytes )); then

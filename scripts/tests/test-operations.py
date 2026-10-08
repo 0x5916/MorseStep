@@ -134,7 +134,7 @@ class Operations(unittest.TestCase):
         self.root = Path(self.temp.name)
         for directory in ["bin", "backups", "tmp", "scripts/lib", "cgroup"]:
             (self.root/directory).mkdir(parents=True)
-        for source in [*(REPO/"scripts").rglob("*.sh"), *(REPO/"scripts/lib").glob("*.awk")]:
+        for source in [*(REPO/"scripts").rglob("*.sh"), *(REPO/"scripts/lib").glob("*.awk"), *(REPO/"db").glob("*.sh")]:
             target = self.root/source.relative_to(REPO)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)

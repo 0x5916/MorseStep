@@ -296,6 +296,8 @@
   "settings_language_label": "言語",
   "settings_current_lesson_label": "現在のレッスン",
   "settings_cw_section": "CW設定",
+  "settings_test_tone": "テスト再生",
+  "settings_test_tone_label": "テスト再生：AAAを聞く",
   "settings_update": "更新",
   "settings_saved": "保存しました！",
   "settings_saving": "保存中…",

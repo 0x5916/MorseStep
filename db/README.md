@@ -4,11 +4,28 @@
 
 Configuration defaults live in [example.env](../example.env); deployment steps live in [DEPLOYMENT.md](../DEPLOYMENT.md#postgresql-resource-tuning). Validate values with `make check` before recreating the container.
 
-The tuner implements OpenCW's own web/OLTP heuristics. Several memory ratios match [PGTune's calculator](https://github.com/le0pard/pgtune/blob/master/src/features/configuration/configurationSlice.js), but the `work_mem` formula, WAL sizing, worker rules, and clamps differ. It does not run PGTune or reproduce every setting from the website; the formulas below describe this repository's behavior.
+## Choose a calculator
+
+New installations select `POSTGRES_TUNE_MODE=pgtune` in the template. Set `POSTGRES_MEMORY_LIMIT` to the RAM allocated to PostgreSQL alone, not total LXC RAM; leave other tuning lines commented. Remove the leading `#` from an optional line to enable its value (`//` is not an environment-file comment).
+
+| Mode     | Behavior                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------ |
+| `pgtune` | Local PGTune calculations; web workload, Linux, PostgreSQL 18, SSD, and `mid_ram` defaults |
+| `opencw` | Previous OpenCW web/OLTP calculator; also selected when the mode is absent                 |
+| `off`    | Image defaults without derived settings; explicit extra arguments still apply              |
+
+[pgtune.sh](pgtune.sh) ports [PGTune at revision `171f129`](https://github.com/le0pard/pgtune/blob/171f1295abd64ec022c7313725db03a191a77db8/src/features/configuration/configurationSlice.js); its [MIT license](PGTUNE-LICENSE) is retained. It runs locally without contacting the website or installing packages. For LXC compatibility, it reports adjustments to `io_method=worker`, `huge_pages=off`, and `wal_compression=pglz`; inspect the preview for the settings applied to your budget. The previous calculator's formulas remain documented below.
+
+```bash
+make tune
+scripts/tune.sh --env-file /opt/opencw/.env
+```
+
+The preview validates tuning inputs and prints the selected budget, assumptions, settings, shared-memory capacity, and compatibility adjustments without Docker or database changes. Tuning values must be literal; `$` interpolation is rejected. It uses host CPU detection; the running database can observe tighter Docker/cgroup limits. Set `POSTGRES_CPU_LIMIT` for an explicit CPU ceiling.
 
 ## Budget detection
 
-Memory uses the first valid source: `POSTGRES_MEMORY_LIMIT`, cgroup v2 `memory.max`, cgroup v1 `memory.limit_in_bytes`, then `POSTGRES_HOST_MEMORY_SHARE` percent of `/proc/meminfo` memory, capped at 4 GiB. Automatic tuning requires a memory budget of at least 512 MiB; smaller budgets fail before PostgreSQL starts. Leading zeros in numeric values are decimal. The default host share is 50%; it applies only to that fallback, not to declared or cgroup limits.
+PGTune mode requires a declared, nonzero `POSTGRES_MEMORY_LIMIT`. OpenCW mode uses the first valid source: that explicit limit, cgroup v2 `memory.max`, cgroup v1 `memory.limit_in_bytes`, then `POSTGRES_HOST_MEMORY_SHARE` percent of `/proc/meminfo` memory, capped at 4 GiB. Automatic tuning requires a memory budget of at least 512 MiB; smaller budgets fail before PostgreSQL starts. Leading zeros in numeric values are decimal. The default host share is 50%; it applies only to the OpenCW fallback, not to declared or cgroup limits.
 
 CPU detection takes the minimum of applicable `POSTGRES_CPU_LIMIT`, cgroup v2/v1 quotas, effective cpuset, and available CPU count. Fractional CPU quotas round up for worker sizing. `0` for either explicit limit means unlimited in Compose. Explicit limits also set Docker's `mem_limit` and `cpus`.
 
@@ -19,7 +36,7 @@ POSTGRES_MEMORY_LIMIT=3g
 POSTGRES_CPU_LIMIT=4
 ```
 
-## Derived settings
+## Previous OpenCW calculations
 
 Let `B` be the memory budget in MiB and `C` the clamped connection ceiling. Integer arithmetic and floors are defined in [tune.sh](tune.sh).
 
@@ -39,18 +56,21 @@ The script also supplies fixed `checkpoint_completion_target=0.9`, `default_stat
 
 ## Overrides and shared memory
 
-| Variable                                      | Effect                                                                       |
-| --------------------------------------------- | ---------------------------------------------------------------------------- |
-| `POSTGRES_MEMORY_LIMIT`, `POSTGRES_CPU_LIMIT` | Explicit budget and enforced container ceilings                              |
-| `POSTGRES_SHM_SIZE`                           | Compose shared-memory size, default `2gb`; fixed when creating the container |
-| `POSTGRES_MAX_CONNECTIONS`                    | Connection demand ceiling; also divides `work_mem`                           |
-| `POSTGRES_HOST_MEMORY_SHARE`                  | Host fallback percentage, 1–100                                              |
-| `POSTGRES_TUNE_EXTRA`                         | Extra server arguments appended last, such as `-c work_mem=32MB`             |
-| `POSTGRES_TUNE_DISABLE=1`                     | Skip derived tuning and use image defaults                                   |
+| Variable                                      | Effect                                                                                                                                                                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_MEMORY_LIMIT`, `POSTGRES_CPU_LIMIT` | Explicit budget and enforced container ceilings                                                                                                                                                                   |
+| `POSTGRES_TUNE_PROFILE`                       | `web` (default), `oltp`, `dw`, `desktop`, or `mixed`                                                                                                                                                              |
+| `POSTGRES_TUNE_STORAGE`                       | `ssd` (default), `hdd`, `san`, or `nvme`                                                                                                                                                                          |
+| `POSTGRES_TUNE_DB_SIZE`                       | `mid_ram` (default), `less_ram`, or `greater_ram`, describing data size relative to RAM                                                                                                                           |
+| `POSTGRES_SHM_SIZE`                           | Explicit Docker shared-memory capacity; overrides the calculated size                                                                                                                                             |
+| `POSTGRES_MAX_CONNECTIONS`                    | PGTune: at least 4, with an upper ceiling reserving PostgreSQL 18 worker slots; preview reports the ceiling computed by [pgtune.sh](pgtune.sh). Defaults: 200 for PGTune web, 100 for OpenCW (clamped to 10–1000) |
+| `POSTGRES_HOST_MEMORY_SHARE`                  | Host fallback percentage, 1–100                                                                                                                                                                                   |
+| `POSTGRES_TUNE_EXTRA`                         | Extra server arguments appended last, such as `-c work_mem=8MB`                                                                                                                                                   |
+| `POSTGRES_TUNE_DISABLE=1`                     | Legacy image-default selection when mode is absent or `off`; conflicts with explicit `pgtune`/`opencw`                                                                                                            |
 
-Prefer adjusting the budget when several settings should scale together. `POSTGRES_SHM_SIZE` sets Docker's [`shm_size`](https://docs.docker.com/reference/compose-file/services/#shm_size), the `/dev/shm` capacity; it is separate from PostgreSQL's automatically derived `shared_buffers` and is not a tuner output. Keep shared memory below the container memory limit: `/dev/shm` counts toward that limit. A shared-memory warning can indicate parallel queries need more space or fewer workers. Keep the server connection ceiling above the backend pool plus administration and backup connections.
+Prefer adjusting the budget when several settings should scale together. Docker's [`shm_size`](https://docs.docker.com/reference/compose-file/services/#shm_size) controls `/dev/shm`, separate from PostgreSQL's `shared_buffers`. In PGTune mode, the operational scripts calculate capacity as RAM / 8, bounded to 64 MiB–2 GiB, before creating the container. This is an OpenCW policy, not a PGTune formula; a 2-GiB budget gives 256 MiB. An enabled `POSTGRES_SHM_SIZE` overrides it; OpenCW/off modes retain the 2-GiB fallback when omitted. Keep shared memory below the container memory limit: allocated `/dev/shm` counts toward it. Keep the connection ceiling above the backend pool plus administration and backup connections.
 
-Command-line settings override configuration-file values, including `ALTER SYSTEM`. Persistent overrides belong in the environment, not edits to `PGDATA`. Run `docker compose up -d db` after configuration changes; a plain restart does not load a changed Compose environment. Malformed tuning input warns and falls back; a missing image entrypoint is fatal.
+Command-line settings override configuration-file values, including `ALTER SYSTEM`. Persistent overrides belong in the environment, not edits to `PGDATA`. Apply changes with `make deploy`/`make update`; a plain restart does not reload Compose configuration. Direct Compose commands use the static `2gb` shared-memory fallback unless a size is explicitly supplied: after reviewing a 256-MiB preview, for example, `POSTGRES_SHM_SIZE=256mb docker compose up -d db` recreates just the database with that capacity. Invalid inputs fail validation; a missing image entrypoint is fatal.
 
 ## Inspect and troubleshoot
 
