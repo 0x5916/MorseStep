@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     ArrowRight,
     ChevronRight,
+    CircleCheck,
+    CircleX,
     Dumbbell,
     Info,
     LayoutDashboard,
@@ -11,9 +13,10 @@
     Square
   } from '@lucide/svelte';
   import { createWebAudioEngine, type AudioEngine } from '$lib/audio/engine';
+  import { acceptsSessionShortcut } from '$lib/components/learning/keyboard';
   import { buildAudioPlan } from '$lib/training/timing';
   import { localizedHref as href } from '$lib/i18n.svelte';
-  import { getLessonCharacterSet } from '$lib/training/sequence';
+  import { getLessonCharacterSet, MORSE } from '$lib/training/sequence';
   import { GITHUB_URL } from '$lib/seo';
   import * as m from '$lib/paraglide/messages';
 
@@ -39,17 +42,49 @@
 
   const PREVIEW_LESSON = 1;
   const previewChars = getLessonCharacterSet(PREVIEW_LESSON);
+  const samplePlans = Object.fromEntries(
+    previewChars.map((char) => [
+      char,
+      buildAudioPlan(char, { charWpm: 20, effWpm: 20, volume: 0.2 })
+    ])
+  );
   let sampleCharacter = $state<string | null>(null);
   let sampleError = $state(false);
+  let activeTone = $state(-1);
+  let heardCharacters = $state<string[]>([]);
+  let quizCharacter = $state<string | null>(null);
+  let quizAnswer = $state<string | null>(null);
+  let previewFrame = $state<HTMLElement | null>(null);
   let audio: AudioEngine | null = null;
+  let animationFrame = 0;
+
+  function clearSample() {
+    cancelAnimationFrame(animationFrame);
+    sampleCharacter = null;
+    activeTone = -1;
+  }
+
+  function updateTone() {
+    if (!sampleCharacter || quizCharacter) return;
+    const elapsed = audio?.elapsed() ?? 0;
+    activeTone = samplePlans[sampleCharacter].events.findIndex(
+      (tone) => elapsed >= tone.start && elapsed < tone.start + tone.duration
+    );
+    animationFrame = requestAnimationFrame(updateTone);
+  }
 
   onMount(() => {
     audio = createWebAudioEngine();
     const unsubscribe = audio.subscribe(() => {
-      if (!audio?.isActive()) sampleCharacter = null;
+      if (audio?.isActive()) return;
+      if (sampleCharacter && !quizCharacter && !heardCharacters.includes(sampleCharacter)) {
+        heardCharacters = [...heardCharacters, sampleCharacter];
+      }
+      clearSample();
     });
     return () => {
       unsubscribe();
+      clearSample();
       void audio?.dispose();
       audio = null;
     };
@@ -59,29 +94,73 @@
     if (!audio) return;
     sampleError = false;
     if (sampleCharacter === character) {
-      sampleCharacter = null;
+      clearSample();
       void audio.stop({ notify: false });
       return;
     }
     try {
-      audio.play(buildAudioPlan(character, { charWpm: 20, effWpm: 20, volume: 0.2 }));
+      clearSample();
+      audio.play(samplePlans[character]);
       sampleCharacter = character;
+      updateTone();
     } catch {
-      sampleCharacter = null;
+      clearSample();
       sampleError = true;
       void audio.stop({ notify: false });
     }
   }
 
+  function focusPreview(selector = 'button') {
+    void tick().then(() => previewFrame?.querySelector<HTMLButtonElement>(selector)?.focus());
+  }
+
+  function startQuiz() {
+    quizCharacter = previewChars[Math.floor(Math.random() * previewChars.length)];
+    quizAnswer = null;
+    clearSample();
+    playSample(quizCharacter);
+    focusPreview();
+  }
+
+  function answerQuiz(character: string) {
+    if (!sampleCharacter && !sampleError && !quizAnswer) {
+      quizAnswer = character;
+      focusPreview('.quiz-actions button');
+    }
+  }
+
+  function handlePreviewKeydown(event: KeyboardEvent) {
+    if (!quizCharacter || !acceptsSessionShortcut(event)) return;
+    if (event.code === 'Space') {
+      event.preventDefault();
+      quizAnswer = null;
+      clearSample();
+      playSample(quizCharacter);
+    } else if (event.key === 'Enter' && quizAnswer) {
+      event.preventDefault();
+      startQuiz();
+    }
+  }
+
+  function returnToSamples() {
+    clearSample();
+    void audio?.stop({ notify: false });
+    quizCharacter = null;
+    quizAnswer = null;
+    sampleError = false;
+    focusPreview();
+  }
+
   function stopHiddenSample() {
     if (document.hidden) {
-      sampleCharacter = null;
+      clearSample();
       void audio?.stop({ notify: false });
     }
   }
 </script>
 
 <svelte:document onvisibilitychange={stopHiddenSample} />
+<svelte:window onkeydown={handlePreviewKeydown} />
 
 <section class="masthead" aria-labelledby="home-title">
   <div class="masthead-artwork" aria-hidden="true">
@@ -116,6 +195,108 @@
   <div class="masthead-copy">
     <h1 id="home-title" class="masthead-title">{m.home_hero_title()}</h1>
     <p class="masthead-lede">{m.home_hero_subtitle()}</p>
+    <!-- This is a sound introduction, not an assessed recognition prompt. -->
+    <figure class="preview-frame" aria-labelledby="home-preview-title" bind:this={previewFrame}>
+      <div class="preview-heading">
+        <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
+        <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
+      </div>
+      {#if quizCharacter}
+        <p class="quiz-question">{m.home_quiz_question()}</p>
+        <button
+          type="button"
+          class="btn-ghost preview-control"
+          onclick={() => {
+            quizAnswer = null;
+            playSample(quizCharacter!);
+          }}
+        >
+          {#if sampleCharacter}<Square size={16} aria-hidden="true" />{:else}<Play
+              size={16}
+              aria-hidden="true"
+            />{/if}
+          {sampleCharacter ? m.player_stop() : m.home_quiz_replay()}
+        </button>
+        <div class="preview-chars">
+          {#each previewChars as char (char)}
+            <button
+              type="button"
+              class="preview-char sample-letter"
+              disabled={!!sampleCharacter || sampleError || !!quizAnswer}
+              onclick={() => answerQuiz(char)}>{char}</button
+            >
+          {/each}
+        </div>
+        <p class="sample-status body-text" role="status" aria-atomic="true">
+          {#if quizAnswer}
+            {#if quizAnswer === quizCharacter}<CircleCheck
+                size={18}
+                aria-hidden="true"
+              />{:else}<CircleX size={18} aria-hidden="true" />{/if}
+            {quizAnswer === quizCharacter
+              ? m.home_quiz_correct({ character: quizCharacter })
+              : m.home_quiz_incorrect({ character: quizCharacter })}
+          {:else}{m.home_quiz_playing()}{/if}
+        </p>
+        <div class="quiz-actions">
+          {#if quizAnswer}<button
+              type="button"
+              class="btn-ghost preview-control"
+              onclick={startQuiz}>{m.home_quiz_again()}</button
+            >{/if}
+          <button type="button" class="btn-ghost preview-control" onclick={returnToSamples}
+            >{m.home_quiz_back()}</button
+          >
+        </div>
+      {:else}
+        <div class="preview-chars">
+          {#each previewChars as char (char)}
+            <button
+              type="button"
+              class="preview-char"
+              aria-label={sampleCharacter === char
+                ? m.home_sample_stop({ character: char })
+                : m.home_sample_play({ character: char })}
+              aria-pressed={sampleCharacter === char}
+              onclick={() => playSample(char)}
+            >
+              <span class="sample-symbol">
+                <span class="sample-letter">{char}</span>
+                <span class="sample-pattern" aria-hidden="true">
+                  {#each [...MORSE[char]] as symbol, index (index)}
+                    <span
+                      class={{ 'tone-active': sampleCharacter === char && activeTone === index }}
+                      >{symbol === '.' ? '·' : '−'}</span
+                    >
+                  {/each}
+                </span>
+              </span>
+              <span class="sample-action">
+                {#if sampleCharacter === char}<Square size={16} aria-hidden="true" />{:else}<Play
+                    size={16}
+                    aria-hidden="true"
+                  />{/if}
+                {sampleCharacter === char ? m.player_stop() : m.home_step1_title()}
+              </span>
+            </button>
+          {/each}
+        </div>
+        <p class="sample-status body-text" aria-live="polite" aria-atomic="true">
+          {sampleCharacter
+            ? m.home_sample_playing({ character: sampleCharacter })
+            : m.home_sample_hint()}
+        </p>
+        {#if heardCharacters.length === previewChars.length}
+          <button type="button" class="btn-ghost preview-control" onclick={startQuiz}
+            >{m.home_quiz_start()}</button
+          >
+        {/if}
+      {/if}
+      {#if sampleError}<p class="sample-error body-text" role="alert">
+          {m.home_sample_error()}
+        </p>{/if}
+      <p class="body-text audio-hint">{m.home_audio_hint()}</p>
+    </figure>
     <div class="masthead-actions">
       <a href={href('/morse/learn')} class="btn-cta"
         >{m.home_cta()}<ArrowRight size={18} aria-hidden="true" /></a
@@ -124,43 +305,6 @@
         >{m.home_hero_cta_secondary()}</a
       >
     </div>
-    <!-- This is a sound introduction, not an assessed recognition prompt. -->
-    <figure class="preview-frame" aria-labelledby="home-preview-title">
-      <div class="preview-heading">
-        <h2 id="home-preview-title" class="preview-title">{m.home_preview_title()}</h2>
-        <span class="preview-lesson">{m.learn_path_lesson({ step: PREVIEW_LESSON })}</span>
-      </div>
-      <div class="preview-chars">
-        {#each previewChars as char (char)}
-          <button
-            type="button"
-            class="preview-char"
-            aria-label={sampleCharacter === char
-              ? m.home_sample_stop({ character: char })
-              : m.home_sample_play({ character: char })}
-            aria-pressed={sampleCharacter === char}
-            onclick={() => playSample(char)}
-          >
-            <span class="sample-letter">{char}</span>
-            <span class="sample-action">
-              {#if sampleCharacter === char}<Square size={16} aria-hidden="true" />{:else}<Play
-                  size={16}
-                  aria-hidden="true"
-                />{/if}
-              {sampleCharacter === char ? m.player_stop() : m.home_step1_title()}
-            </span>
-          </button>
-        {/each}
-      </div>
-      <p class="sample-status body-text" aria-live="polite" aria-atomic="true">
-        {sampleCharacter
-          ? m.home_sample_playing({ character: sampleCharacter })
-          : m.home_sample_hint()}
-      </p>
-      {#if sampleError}<p class="sample-error body-text" role="alert">
-          {m.home_sample_error()}
-        </p>{/if}
-    </figure>
     <p class="body-text reassurance">{m.home_reassurance()}</p>
   </div>
 </section>
@@ -237,7 +381,7 @@
   }
 
   .masthead-artwork {
-    grid-row: 2;
+    display: none;
     width: 100%;
     pointer-events: none;
   }
@@ -272,7 +416,7 @@
   }
 
   .masthead-lede {
-    margin: var(--space-3) 0 var(--space-5);
+    margin: var(--space-3) 0 var(--space-4);
     font-size: var(--text-lg);
     line-height: var(--leading-relaxed);
     color: var(--text-secondary);
@@ -285,6 +429,7 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-4);
+    margin-top: var(--space-4);
   }
 
   .masthead-actions :global(a) {
@@ -303,6 +448,7 @@
 
   .reassurance {
     margin: var(--space-3) 0 0;
+    color: var(--text-primary);
   }
 
   .learning-intro {
@@ -314,8 +460,8 @@
     flex-direction: column;
     min-width: 0;
     gap: var(--space-3);
-    max-width: 28rem;
-    margin: var(--space-5) auto 0;
+    max-width: 32rem;
+    margin: 0 auto;
     padding: var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -367,10 +513,64 @@
     cursor: pointer;
   }
 
-  .preview-char:hover,
-  .preview-char[aria-pressed='true'] {
+  .preview-char:hover:not(:disabled):not([aria-pressed='true']) {
     border-color: var(--accent);
     background-color: var(--bg-inset);
+  }
+
+  .preview-char[aria-pressed='true'] {
+    border-color: var(--accent-cta);
+    background-color: var(--accent-cta);
+    color: var(--on-accent);
+  }
+
+  .sample-symbol {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .sample-pattern {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-1);
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    line-height: 1;
+  }
+
+  .tone-active {
+    text-decoration: underline;
+    text-underline-offset: var(--space-1);
+  }
+
+  .preview-control {
+    min-height: var(--answer-target-min);
+    white-space: normal;
+  }
+
+  .quiz-actions {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .quiz-question,
+  .audio-hint {
+    margin: 0;
+  }
+
+  .sample-status :global(svg) {
+    display: inline;
+    vertical-align: middle;
+  }
+
+  .preview-char:disabled {
+    cursor: default;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tone-active {
+      text-decoration: none;
+    }
   }
 
   .sample-letter {
@@ -541,6 +741,7 @@
     }
 
     .masthead-artwork {
+      display: block;
       position: absolute;
       grid-row: auto;
       inset-block: 0;
@@ -549,6 +750,7 @@
       width: 100vw;
       overflow: clip;
       transform: translateX(-50%);
+      opacity: 0.4;
       background:
         radial-gradient(
           ellipse at 10% 20%,

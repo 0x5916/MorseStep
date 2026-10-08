@@ -21,7 +21,7 @@ Sound training stores guided attempts on the device. API access is needed for ac
 
 [package.json](package.json) is the command inventory. `npm run verify` runs message validation, SEO validation, Svelte/TypeScript checking, script checking, and Vitest. Run `npm run lint` for Prettier/ESLint and `npm run build` for the static output in `build/`. `npm run preview` serves that build locally.
 
-`npm run check` compiles Paraglide before Svelte checking; `npm run build` compiles it through the Vite plugin. Tests run in Node via [vitest.config.ts](vitest.config.ts), including domain, controller, audio, sync, and repository tests. IndexedDB tests currently import `fake-indexeddb`, which is absent from the manifest and lockfile; a passing full verification gate must not be assumed until that dependency is resolved with approval.
+`npm run check` compiles Paraglide before Svelte checking; `npm run build` compiles it through the Vite plugin. Tests run in Node via [vitest.config.ts](vitest.config.ts), including domain, controller, audio, sync, and repository tests. IndexedDB tests use the `fake-indexeddb` development dependency declared in [package.json](package.json).
 
 [Dockerfile](Dockerfile) runs verification before building. To build and serve the image:
 

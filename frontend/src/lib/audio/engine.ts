@@ -47,6 +47,8 @@ export function createWebAudioEngine(options: WebAudioEngineOptions = {}): Audio
   const listeners = new Set<(event: AudioEngineEvent) => void>();
 
   let ctx: AudioContext | null = null;
+  let oscillator: OscillatorNode | null = null;
+  let outputGain: GainNode | null = null;
   let ctxStartTime = 0;
   let generation = 0;
   let active = false;
@@ -64,19 +66,35 @@ export function createWebAudioEngine(options: WebAudioEngineOptions = {}): Audio
 
     active = false;
     paused = false;
-    generation += 1;
+    const stoppedGeneration = ++generation;
     const audio = ctx;
+    const oldOscillator = oscillator;
+    const oldGain = outputGain;
     ctx = null;
+    oscillator = null;
+    outputGain = null;
     // Close the notification window synchronously so a silent stop can never
     // clobber the ended flag of a playback that starts while close() settles.
     const shouldNotify = notify && !endedNotified;
     endedNotified = true;
+    // Context shutdown is asynchronous. Cut the output before a replacement
+    // can start, even if close() is delayed or fails.
+    oldGain?.disconnect();
+    if (oldOscillator) {
+      oldOscillator.onended = null;
+      oldOscillator.disconnect();
+      try {
+        oldOscillator.stop(audio?.currentTime);
+      } catch {
+        // An oscillator that has already ended needs no further stop.
+      }
+    }
     try {
       await audio?.close();
     } catch {
       // Closing an already-closed context is harmless.
     }
-    if (shouldNotify) notifyEnded();
+    if (shouldNotify && !disposed && generation === stoppedGeneration) notifyEnded();
   }
 
   function play(plan: AudioPlan): void {
@@ -90,16 +108,21 @@ export function createWebAudioEngine(options: WebAudioEngineOptions = {}): Audio
 
     const audio = createContext();
     ctx = audio;
-    ctxStartTime = audio.currentTime;
-    const t0 = audio.currentTime + plan.startDelay;
 
     const osc = audio.createOscillator();
+    oscillator = osc;
     const gain = audio.createGain();
+    outputGain = gain;
     osc.connect(gain);
     gain.connect(audio.destination);
     osc.frequency.value = plan.frequency;
 
-    gain.gain.setValueAtTime(0, t0);
+    // Match the original player: read the clock after graph setup and silence
+    // the oscillator immediately. A future zero leaves GainNode's default
+    // gain of 1 audible throughout the start delay.
+    ctxStartTime = audio.currentTime;
+    const t0 = ctxStartTime + plan.startDelay;
+    gain.gain.setValueAtTime(0, ctxStartTime);
     for (const event of plan.events) {
       const start = t0 + event.start;
       const end = start + event.duration;
@@ -121,14 +144,18 @@ export function createWebAudioEngine(options: WebAudioEngineOptions = {}): Audio
 
   async function pause(): Promise<void> {
     if (disposed || !active || paused || !ctx) return;
-    await ctx.suspend();
-    paused = true;
+    const audio = ctx;
+    const gen = generation;
+    await audio.suspend();
+    if (!disposed && gen === generation && ctx === audio) paused = true;
   }
 
   async function resume(): Promise<void> {
     if (disposed || !active || !paused || !ctx) return;
-    await ctx.resume();
-    paused = false;
+    const audio = ctx;
+    const gen = generation;
+    await audio.resume();
+    if (!disposed && gen === generation && ctx === audio) paused = false;
   }
 
   async function stop(options: { notify?: boolean } = {}): Promise<void> {
