@@ -11,6 +11,7 @@
  */
 
 import { evaluateProgression } from './progression';
+import { calculateMedian } from './statistics';
 import type { AttemptEvent, Prompt, SessionSummary } from './types';
 
 export type GuidedSessionPhase =
@@ -163,23 +164,11 @@ export function guidedSessionTransition(
       }
 
       const isIntro = state.currentPrompt?.spec.kind === 'introduction';
-      if (isIntro) {
-        return {
-          ok: true,
-          state: {
-            ...state,
-            phase: 'introducing',
-            answerReadyAtMs: event.endedAtMs
-          },
-          effects: []
-        };
-      }
-
       return {
         ok: true,
         state: {
           ...state,
-          phase: 'answering',
+          phase: isIntro ? 'introducing' : 'answering',
           answerReadyAtMs: event.endedAtMs
         },
         effects: []
@@ -282,15 +271,7 @@ export function guidedSessionTransition(
             : 0;
 
         const latencies = scoredAttempts.filter((a) => a.isCorrect).map((a) => a.latencyMs);
-        latencies.sort((a, b) => a - b);
-        const medianLatencyMs =
-          latencies.length > 0
-            ? latencies.length % 2 === 1
-              ? latencies[Math.floor(latencies.length / 2)]
-              : Math.round(
-                  (latencies[latencies.length / 2 - 1] + latencies[latencies.length / 2]) / 2
-                )
-            : null;
+        const medianLatencyMs = calculateMedian(latencies);
 
         const totalReplays = state.attempts.reduce((sum, a) => sum + a.replayCount, 0);
 

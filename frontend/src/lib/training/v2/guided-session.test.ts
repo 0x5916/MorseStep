@@ -78,7 +78,39 @@ describe('Guided Session State Machine', () => {
     expect(startTransition.ok).toBe(true);
     if (startTransition.ok) {
       expect(startTransition.state.phase).toBe('introducing');
+      const playing = guidedSessionTransition(startTransition.state, { type: 'play' });
+      const ended = guidedSessionTransition(playing.state, { type: 'play-end', endedAtMs: 5000 });
+      expect(ended.ok).toBe(true);
+      if (ended.ok) {
+        expect(ended.state.phase).toBe('introducing');
+        expect(ended.state.answerReadyAtMs).toBe(5000);
+        expect(ended.state.attempts).toEqual([]);
+        expect(ended.effects).toEqual([]);
+      }
     }
+  });
+
+  it('summarizes latency from correct scored attempts with rounded even medians', () => {
+    const attempts = [
+      { ...createMockAttempt('p1'), latencyMs: 1201 },
+      { ...createMockAttempt('p2'), latencyMs: 1200 },
+      { ...createMockAttempt('p3', false), latencyMs: 100 },
+      { ...createMockAttempt('p4'), classification: 'unmeasured' as const, latencyMs: 0 }
+    ];
+    const state: GuidedSessionState = {
+      ...createGuidedSession({ sessionId: 'sess_1', step: 1, prompts: [createMockPrompt('p1')] }),
+      phase: 'feedback',
+      attempts
+    };
+    const res = guidedSessionTransition(state, { type: 'continue' });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.state.summary?.medianLatencyMs).toBe(1201);
+      expect(res.state.summary?.scoredAttempts).toBe(3);
+      expect(res.state.summary?.correctAttempts).toBe(2);
+    }
+    expect(attempts.map((attempt) => attempt.latencyMs)).toEqual([1201, 1200, 100, 0]);
   });
 
   it('executes play -> play-end -> answering lifecycle cleanly', () => {
